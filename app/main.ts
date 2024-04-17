@@ -5,6 +5,12 @@ const ServerTimeout = 1000;
 
 const server: net.Server = net.createServer();
 
+type keyValueStore = {
+  [key: string]: string;
+};
+
+const kvStore: keyValueStore = {};
+
 server.on("connection", (connection: net.Socket) => {
   console.log("client connected");
   connection.on("close", () => {
@@ -20,7 +26,18 @@ server.on("connection", (connection: net.Socket) => {
       case "ECHO":
         connection.write(encodeBulk(cmd[1]));
         break;
-    }
+      case "SET":
+        kvStore[cmd[1]] = cmd[2];
+        connection.write(encodeSimple("OK"));
+        break;
+      case "GET":
+        if (Object.hasOwn(kvStore, cmd[1])) {
+          connection.write(encodeBulk(kvStore[cmd[1]]));
+        } else {
+          connection.write(encodeNull());
+        }
+        break;
+      }
   });
   setTimeout(() => connection.end(), ClientTimeout);
 });
@@ -55,4 +72,8 @@ function encodeSimple(s: string): string {
 
 function encodeBulk(s: string): string {
   return `\$${s.length}\r\n${s}\r\n`;
+}
+
+function encodeNull(): string {
+  return `$-1\r\n`;
 }
