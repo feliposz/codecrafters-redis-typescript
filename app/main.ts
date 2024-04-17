@@ -6,7 +6,10 @@ const ServerTimeout = 1000;
 const server: net.Server = net.createServer();
 
 type keyValueStore = {
-  [key: string]: string;
+  [key: string]: {
+    value: string;
+    expiration?: Date;
+  };
 };
 
 const kvStore: keyValueStore = {};
@@ -19,6 +22,7 @@ server.on("connection", (connection: net.Socket) => {
   });
   connection.on("data", (data) => {
     const cmd = decodeResp(data.toString());
+    console.log(cmd);
     switch (cmd[0].toUpperCase()) {
       case "PING":
         connection.write(encodeSimple("PONG"));
@@ -27,17 +31,30 @@ server.on("connection", (connection: net.Socket) => {
         connection.write(encodeBulk(cmd[1]));
         break;
       case "SET":
-        kvStore[cmd[1]] = cmd[2];
+        kvStore[cmd[1]] = { value: cmd[2] };
+        if (cmd.length === 5 && cmd[3].toUpperCase() === "PX") {
+          const durationInMs = parseInt(cmd[4], 10);
+          const t = new Date();
+          t.setMilliseconds(t.getMilliseconds() + durationInMs);
+          kvStore[cmd[1]].expiration = t;
+        }
         connection.write(encodeSimple("OK"));
         break;
       case "GET":
         if (Object.hasOwn(kvStore, cmd[1])) {
-          connection.write(encodeBulk(kvStore[cmd[1]]));
+          const entry = kvStore[cmd[1]];
+          const now = new Date();
+          if ((entry.expiration ?? now) < now) {
+            delete kvStore[cmd[1]];
+            connection.write(encodeNull());
+          } else {
+            connection.write(encodeBulk(entry.value));
+          }
         } else {
           connection.write(encodeNull());
         }
         break;
-      }
+    }
   });
   setTimeout(() => connection.end(), ClientTimeout);
 });
