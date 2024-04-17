@@ -1,4 +1,5 @@
 import * as net from "node:net";
+import * as path from "https://deno.land/std@0.207.0/path/mod.ts";
 
 const ClientTimeout = 1000;
 const ServerTimeout = 1000;
@@ -30,6 +31,16 @@ for (let i = 0; i < Deno.args.length; i++) {
   } else if (Deno.args[i] === "--dbfilename") {
     cfg.dbfilename = Deno.args[i + 1];
     i++;
+  }
+}
+
+if (cfg.dbfilename !== "") {
+  try {
+    const bytes = await Deno.readFile(path.join(cfg.dir, cfg.dbfilename));
+    console.log(bytes);
+  } catch (e) {
+    // silently ignore if not present
+    console.log(e);
   }
 }
 
@@ -72,6 +83,9 @@ server.on("connection", (connection: net.Socket) => {
         } else {
           connection.write(encodeNull());
         }
+        break;
+      case "KEYS":
+        connection.write(encodeArray(Object.keys(kvStore)));
         break;
       case "CONFIG":
         if (cmd.length == 3 && cmd[1].toUpperCase() === "GET") {
