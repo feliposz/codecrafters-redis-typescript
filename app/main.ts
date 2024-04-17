@@ -12,7 +12,26 @@ type keyValueStore = {
   };
 };
 
+type serverConfig = {
+  dir: string;
+  dbfilename: string;
+};
+
 const kvStore: keyValueStore = {};
+const cfg: serverConfig = {
+  dir: "",
+  dbfilename: "",
+};
+
+for (let i = 0; i < Deno.args.length; i++) {
+  if (Deno.args[i] === "--dir") {
+    cfg.dir = Deno.args[i + 1];
+    i++;
+  } else if (Deno.args[i] === "--dbfilename") {
+    cfg.dbfilename = Deno.args[i + 1];
+    i++;
+  }
+}
 
 server.on("connection", (connection: net.Socket) => {
   console.log("client connected");
@@ -54,6 +73,25 @@ server.on("connection", (connection: net.Socket) => {
           connection.write(encodeNull());
         }
         break;
+      case "CONFIG":
+        if (cmd.length == 3 && cmd[1].toUpperCase() === "GET") {
+          switch (cmd[2].toLowerCase()) {
+            case "dir":
+              connection.write(encodeArray(["dir", cfg.dir]));
+              break;
+            case "dbfilename":
+              connection.write(encodeArray(["dbfilename", cfg.dbfilename]));
+              break;
+            default:
+              connection.write(encodeError("not found"));
+              break;
+          }
+        } else {
+          connection.write(encodeError("action not implemented"));
+        }
+        break;
+      default:
+        connection.write(encodeError("command not implemented"));
     }
   });
   setTimeout(() => connection.end(), ClientTimeout);
@@ -88,9 +126,24 @@ function encodeSimple(s: string): string {
 }
 
 function encodeBulk(s: string): string {
+  if (s.length === 0) {
+    return encodeNull();
+  }
   return `\$${s.length}\r\n${s}\r\n`;
 }
 
 function encodeNull(): string {
   return `$-1\r\n`;
+}
+
+function encodeError(s: string): string {
+  return `-${s}\r\n`;
+}
+
+function encodeArray(arr: string[]): string {
+  let result = `*${arr.length}\r\n`;
+  for (const value of arr) {
+    result += encodeBulk(value);
+  }
+  return result;
 }
