@@ -13,6 +13,8 @@ type serverConfig = {
   dbfilename: string;
   port: number;
   role: string;
+  replicaOfHost: string;
+  replicaOfPort: number;
 };
 
 const encoder = new TextEncoder();
@@ -26,6 +28,8 @@ async function main() {
     dbfilename: "",
     port: 6379,
     role: "master",
+    replicaOfHost: "",
+    replicaOfPort: 0,
   };
 
   for (let i = 0; i < Deno.args.length; i++) {
@@ -41,7 +45,12 @@ async function main() {
       case "--port":
         cfg.port = parseInt(Deno.args[i + 1], 10);
         break;
-    }
+      case "--replicaof":
+        cfg.role = "slave";
+        cfg.replicaOfHost = Deno.args[i + 1];
+        cfg.replicaOfPort = parseInt(Deno.args[i + 2], 10);
+        break;
+      }
   }
 
   const kvStore = loadRdb(cfg);
