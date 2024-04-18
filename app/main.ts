@@ -486,7 +486,7 @@ async function replicaHandshake(cfg: serverConfig, kvStore: keyValueStore) {
   await connection.write(encodeArray(["psync", "?", "-1"]));
 
   // limit size of buffer to only deal with the +FULLRESYNC...
-  const resyncMsgBuffer = new Uint8Array(58);
+  const resyncMsgBuffer = new Uint8Array(56);
   bytesRead = await connection.read(resyncMsgBuffer);
   if (bytesRead == null) {
     throw Error("psync got no response");
