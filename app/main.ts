@@ -11,6 +11,7 @@ type keyValueStore = {
 type serverConfig = {
   dir: string;
   dbfilename: string;
+  port: number;
 };
 
 const encoder = new TextEncoder();
@@ -22,15 +23,22 @@ async function main() {
   const cfg: serverConfig = {
     dir: "",
     dbfilename: "",
+    port: 6379,
   };
 
   for (let i = 0; i < Deno.args.length; i++) {
-    if (Deno.args[i] === "--dir") {
-      cfg.dir = Deno.args[i + 1];
-      i++;
-    } else if (Deno.args[i] === "--dbfilename") {
-      cfg.dbfilename = Deno.args[i + 1];
-      i++;
+    switch (Deno.args[i]) {
+      case "--dir":
+        cfg.dir = Deno.args[i + 1];
+        i++;
+        break;
+      case "--dbfilename":
+        cfg.dbfilename = Deno.args[i + 1];
+        i++;
+        break;
+      case "--port":
+        cfg.port = parseInt(Deno.args[i + 1], 10);
+        break;
     }
   }
 
@@ -38,7 +46,7 @@ async function main() {
 
   const listener = Deno.listen({
     hostname: "127.0.0.1",
-    port: 6379,
+    port: cfg.port,
     transport: "tcp",
   });
 
