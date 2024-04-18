@@ -141,6 +141,9 @@ async function handleConnection(
           ),
         );
         break;
+      case "REPLCONF":
+        await connection.write(encodeBulk("OK"));
+        break;
       default:
         await connection.write(encodeError("command not implemented"));
     }
