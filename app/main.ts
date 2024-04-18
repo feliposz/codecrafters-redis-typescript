@@ -19,6 +19,7 @@ type serverConfig = {
   replid: string;
   offset: number;
   replicas: replicaState[];
+  ackCount: number;
 };
 
 type replicaState = {
@@ -43,6 +44,7 @@ async function main() {
     replid: genReplid(),
     offset: 0,
     replicas: [],
+    ackCount: 0,
   };
 
   for (let i = 0; i < Deno.args.length; i++) {
@@ -117,7 +119,7 @@ async function handleConnection(
           }
           if (sendReply) {
             await connection.write(encodeSimple("OK"));
-            propagate(cfg.replicas, cmd);
+            propagate(cfg, cmd);
           }
           break;
 
@@ -173,6 +175,10 @@ async function handleConnection(
             await connection.write(
               encodeArray(["REPLCONF", "ACK", cfg.offset.toString()]),
             );
+          } else if (cmd[1].toUpperCase() === "ACK") {
+            // assynchronously checked inside handleWait!
+            cfg.ackCount++;
+            // no reply!
           } else {
             await connection.write(encodeBulk("OK"));
           }
@@ -191,9 +197,13 @@ async function handleConnection(
           break;
         }
 
-        case "WAIT":
-          await connection.write(encodeInt(cfg.replicas.length));
+        case "WAIT": {
+          const count = parseInt(cmd[1], 10);
+          const timeout = parseInt(cmd[2], 10);
+          const ackCount = await handleWait(cfg, count, timeout);
+          await connection.write(encodeInt(ackCount));
           break;
+        }
 
         default:
           await connection.write(encodeError("command not implemented"));
@@ -546,12 +556,13 @@ async function replicaHandshake(cfg: serverConfig, kvStore: keyValueStore) {
   handleConnection(connection, cfg, kvStore, false);
 }
 
-function propagate(replicas: replicaState[], cmd: string[]) {
-  replicas = replicas.filter((r) => r.active);
-  for (const replica of replicas) {
+function propagate(cfg: serverConfig, cmd: string[]) {
+  cfg.replicas = cfg.replicas.filter((r) => r.active);
+  for (const replica of cfg.replicas) {
     (async function (replica) {
       try {
-        await replica.connection.write(encodeArray(cmd));
+        const bytesSent = await replica.connection.write(encodeArray(cmd));
+        replica.offset += bytesSent;
       } catch {
         replica.active = false;
       }
@@ -560,3 +571,48 @@ function propagate(replicas: replicaState[], cmd: string[]) {
 }
 
 main();
+
+function handleWait(cfg: serverConfig, count: number, timeout: number): Promise<number> {
+  cfg.ackCount = 0;
+  cfg.replicas = cfg.replicas.filter((r) => r.active);
+  return new Promise((resolve) => {
+
+    const timer = setTimeout(() => {
+      console.log("timeout! count: ", cfg.ackCount);
+      resolve(cfg.ackCount);
+    }, timeout);
+
+    const acknowledge = (increment: number) => {
+      cfg.ackCount += increment;
+      console.log("acknowledged: ", cfg.ackCount);
+      if (cfg.ackCount >= count) {
+        console.log("wait complete!");
+        clearTimeout(timer);
+        resolve(cfg.ackCount);
+      }
+    };
+
+    for (const replica of cfg.replicas) {
+      if (replica.offset > 0) {
+        (async function (replica) {
+          try {
+            console.log("probing replica with offset: ", replica.offset);
+            const bytesSent = await replica.connection.write(encodeArray(["REPLCONF", "GETACK", "*"]));
+            replica.offset += bytesSent;
+            const tmpBuffer = new Uint8Array(128);
+            await replica.connection.read(tmpBuffer); // Ignoring response for now
+            acknowledge(1);
+          } catch {
+            replica.active = false;
+            acknowledge(0);
+          }
+        })(replica);
+      } else {
+        cfg.ackCount++;
+      }
+    }
+
+    acknowledge(0);
+
+  });
+}
