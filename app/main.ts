@@ -192,7 +192,7 @@ async function handleConnection(
         }
 
         case "WAIT":
-          await connection.write(encodeInt(0));
+          await connection.write(encodeInt(cfg.replicas.length));
           break;
 
         default:
