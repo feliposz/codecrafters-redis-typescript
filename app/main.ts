@@ -77,7 +77,7 @@ async function main() {
   });
 
   for await (const connection of listener) {
-    handleConnection(connection, cfg, kvStore);
+    handleConnection(connection, cfg, kvStore, true);
   }
 }
 
@@ -85,109 +85,126 @@ async function handleConnection(
   connection: Deno.TcpConn,
   cfg: serverConfig,
   kvStore: keyValueStore,
+  sendReply: boolean,
 ) {
   console.log("client connected");
   for await (const data of iterateReader(connection)) {
-    const cmd = decodeResp(data);
-    console.log(cmd);
-    switch (cmd[0].toUpperCase()) {
-      case "PING":
-        await connection.write(encodeSimple("PONG"));
-        break;
-      case "ECHO":
-        await connection.write(encodeBulk(cmd[1]));
-        break;
-      case "SET":
-        kvStore[cmd[1]] = { value: cmd[2] };
-        if (cmd.length === 5 && cmd[3].toUpperCase() === "PX") {
-          const durationInMs = parseInt(cmd[4], 10);
-          const t = new Date();
-          t.setMilliseconds(t.getMilliseconds() + durationInMs);
-          kvStore[cmd[1]].expiration = t;
-        }
-        await connection.write(encodeSimple("OK"));
-        propagate(cfg.replicas, cmd);
-        break;
-      case "GET":
-        if (Object.hasOwn(kvStore, cmd[1])) {
-          const entry = kvStore[cmd[1]];
-          const now = new Date();
-          if ((entry.expiration ?? now) < now) {
-            delete kvStore[cmd[1]];
-            await connection.write(encodeNull());
+    const commands = decodeCommands(data);
+    for (const cmd of commands) {
+      console.log(cmd);
+      switch (cmd[0].toUpperCase()) {
+        case "PING":
+          await connection.write(encodeSimple("PONG"));
+          break;
+        case "ECHO":
+          await connection.write(encodeBulk(cmd[1]));
+          break;
+        case "SET":
+          kvStore[cmd[1]] = { value: cmd[2] };
+          if (cmd.length === 5 && cmd[3].toUpperCase() === "PX") {
+            const durationInMs = parseInt(cmd[4], 10);
+            const t = new Date();
+            t.setMilliseconds(t.getMilliseconds() + durationInMs);
+            kvStore[cmd[1]].expiration = t;
+          }
+          if (sendReply) {
+            await connection.write(encodeSimple("OK"));
+            propagate(cfg.replicas, cmd);
+          }
+          break;
+        case "GET":
+          if (Object.hasOwn(kvStore, cmd[1])) {
+            const entry = kvStore[cmd[1]];
+            const now = new Date();
+            if ((entry.expiration ?? now) < now) {
+              delete kvStore[cmd[1]];
+              await connection.write(encodeNull());
+            } else {
+              await connection.write(encodeBulk(entry.value));
+            }
           } else {
-            await connection.write(encodeBulk(entry.value));
+            await connection.write(encodeNull());
           }
-        } else {
-          await connection.write(encodeNull());
-        }
-        break;
-      case "KEYS":
-        await connection.write(encodeArray(Object.keys(kvStore)));
-        break;
-      case "CONFIG":
-        if (cmd.length == 3 && cmd[1].toUpperCase() === "GET") {
-          switch (cmd[2].toLowerCase()) {
-            case "dir":
-              await connection.write(encodeArray(["dir", cfg.dir]));
-              break;
-            case "dbfilename":
-              await connection.write(
-                encodeArray(["dbfilename", cfg.dbfilename]),
-              );
-              break;
-            default:
-              await connection.write(encodeError("not found"));
-              break;
+          break;
+        case "KEYS":
+          await connection.write(encodeArray(Object.keys(kvStore)));
+          break;
+        case "CONFIG":
+          if (cmd.length == 3 && cmd[1].toUpperCase() === "GET") {
+            switch (cmd[2].toLowerCase()) {
+              case "dir":
+                await connection.write(encodeArray(["dir", cfg.dir]));
+                break;
+              case "dbfilename":
+                await connection.write(
+                  encodeArray(["dbfilename", cfg.dbfilename]),
+                );
+                break;
+              default:
+                await connection.write(encodeError("not found"));
+                break;
+            }
+          } else {
+            await connection.write(encodeError("action not implemented"));
           }
-        } else {
-          await connection.write(encodeError("action not implemented"));
+          break;
+        case "INFO":
+          await connection.write(
+            encodeBulk(
+              `role:${cfg.role}\r\nmaster_replid:${cfg.replid}\r\nmaster_repl_offset:${cfg.offset}`,
+            ),
+          );
+          break;
+        case "REPLCONF":
+          await connection.write(encodeBulk("OK"));
+          break;
+        case "PSYNC": {
+          await connection.write(
+            encodeSimple(`FULLRESYNC ${cfg.replid} ${cfg.offset}`),
+          );
+          const emptyRDB = base64.decodeBase64(
+            "UkVESVMwMDEx+glyZWRpcy12ZXIFNy4yLjD6CnJlZGlzLWJpdHPAQPoFY3RpbWXCbQi8ZfoIdXNlZC1tZW3CsMQQAPoIYW9mLWJhc2XAAP/wbjv+wP9aog==",
+          );
+          await connection.write(strToBytes(`\$${emptyRDB.length}\r\n`));
+          await connection.write(emptyRDB);
+          cfg.replicas.push({ connection, offset: 0, active: true });
+          break;
         }
-        break;
-      case "INFO":
-        await connection.write(
-          encodeBulk(
-            `role:${cfg.role}\r\nmaster_replid:${cfg.replid}\r\nmaster_repl_offset:${cfg.offset}`,
-          ),
-        );
-        break;
-      case "REPLCONF":
-        await connection.write(encodeBulk("OK"));
-        break;
-      case "PSYNC": {
-        await connection.write(
-          encodeSimple(`FULLRESYNC ${cfg.replid} ${cfg.offset}`),
-        );
-        const emptyRDB = base64.decodeBase64(
-          "UkVESVMwMDEx+glyZWRpcy12ZXIFNy4yLjD6CnJlZGlzLWJpdHPAQPoFY3RpbWXCbQi8ZfoIdXNlZC1tZW3CsMQQAPoIYW9mLWJhc2XAAP/wbjv+wP9aog==",
-        );
-        await connection.write(strToBytes(`\$${emptyRDB.length}\r\n`));
-        await connection.write(emptyRDB);
-        cfg.replicas.push({ connection, offset: 0, active: true });
-        break;
+        default:
+          await connection.write(encodeError("command not implemented"));
       }
-      default:
-        await connection.write(encodeError("command not implemented"));
     }
   }
   console.log("client disconnected");
 }
 
-function decodeResp(data: Uint8Array): string[] {
-  const result = [];
+function decodeCommands(data: Uint8Array): string[][] {
+  const commands: string[][] = [];
   const parts = bytesToStr(data).split("\r\n");
-  const arrSize = parseInt(parts[0].replace("*", ""), 10);
-  console.log("arrSize:", arrSize);
-  console.log("parts", parts);
-  for (let i = 0; i < arrSize; i++) {
-    const strSize = parseInt(parts[i * 2 + 1].replace("$", ""), 10);
-    const str = parts[i * 2 + 2];
-    if (str.length != strSize) {
-      throw Error("string size mismatch");
+  let index = 0;
+  while (index < parts.length) {
+    if (parts[index] === "") {
+      break;
     }
-    result.push(str);
+    const cmd: string[] = [];
+    if (!parts[index].startsWith("*")) {
+      throw Error("expected RESP array");
+    }
+    const arrSize = parseInt(parts[index++].replace("*", ""), 10);
+    for (let i = 0; i < arrSize; i++) {
+      if (!parts[index].startsWith("$")) {
+        throw Error("expected RESP bulk string");
+      }
+      const strSize = parseInt(parts[index++].replace("$", ""), 10);
+      const str = parts[index++];
+      if (str.length != strSize) {
+        throw Error("bulk string size mismatch");
+      }
+      cmd.push(str);
+    }
+    commands.push(cmd);
   }
-  return result;
+  return commands;
 }
 
 function encodeSimple(s: string): Uint8Array {
@@ -435,16 +452,42 @@ async function replicaHandshake(cfg: serverConfig, kvStore: keyValueStore) {
     transport: "tcp",
   });
   const buffer = new Uint8Array(1024);
+  let bytesRead: number | null = 0;
+
   await connection.write(encodeArray(["ping"]));
-  await connection.read(buffer);
+  bytesRead = await connection.read(buffer);
+  console.log(
+    "Handshake 1 (ping): ",
+    bytesToStr(buffer.slice(0, bytesRead ?? 0)),
+  );
+
   await connection.write(
     encodeArray(["replconf", "listening-port", cfg.port.toString()]),
   );
-  await connection.read(buffer);
+  bytesRead = await connection.read(buffer);
+  console.log(
+    "Handshake 2a (listening-port): ",
+    bytesToStr(buffer.slice(0, bytesRead ?? 0)),
+  );
+
   await connection.write(encodeArray(["replconf", "capa", "psync2"]));
-  await connection.read(buffer);
+  bytesRead = await connection.read(buffer);
+  console.log(
+    "Handshake 2b (capa): ",
+    bytesToStr(buffer.slice(0, bytesRead ?? 0)),
+  );
+
   await connection.write(encodeArray(["psync", "?", "-1"]));
-  await connection.read(buffer);
+  bytesRead = await connection.read(buffer);
+  console.log(
+    "Handshake 3a (psync): ",
+    bytesToStr(buffer.slice(0, bytesRead ?? 0)),
+  );
+
+  bytesRead = await connection.read(buffer);
+  console.log("Handshake 3b (rdb file): bytes received", bytesRead);
+
+  handleConnection(connection, cfg, kvStore, false);
 }
 
 function propagate(replicas: replicaState[], cmd: string[]) {
