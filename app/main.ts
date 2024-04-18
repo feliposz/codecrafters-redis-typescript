@@ -96,7 +96,9 @@ async function handleConnection(
       console.log(cmd);
       switch (cmd[0].toUpperCase()) {
         case "PING":
-          await connection.write(encodeSimple("PONG"));
+          if (sendReply) {
+            await connection.write(encodeSimple("PONG"));
+          }
           break;
         case "ECHO":
           await connection.write(encodeBulk(cmd[1]));
@@ -168,7 +170,7 @@ async function handleConnection(
           break;
         case "PSYNC": {
           await connection.write(
-            encodeSimple(`FULLRESYNC ${cfg.replid} ${cfg.offset}`),
+            encodeSimple(`FULLRESYNC ${cfg.replid} 0`),
           );
           const emptyRDB = base64.decodeBase64(
             "UkVESVMwMDEx+glyZWRpcy12ZXIFNy4yLjD6CnJlZGlzLWJpdHPAQPoFY3RpbWXCbQi8ZfoIdXNlZC1tZW3CsMQQAPoIYW9mLWJhc2XAAP/wbjv+wP9aog==",
@@ -181,6 +183,8 @@ async function handleConnection(
         default:
           await connection.write(encodeError("command not implemented"));
       }
+      // rebuild the original command to get the offset of processed commands...
+      cfg.offset += encodeArray(cmd).length;
     }
   }
   console.log("client disconnected");
