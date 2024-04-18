@@ -416,4 +416,6 @@ async function replicaHandshake(cfg: serverConfig, kvStore: keyValueStore) {
   await connection.read(buffer);
   await connection.write(encodeArray(["replconf", "capa", "psync2"]));
   await connection.read(buffer);
+  await connection.write(encodeArray(["psync", "?", "-1"]));
+  await connection.read(buffer);
 }
