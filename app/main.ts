@@ -409,5 +409,11 @@ async function replicaHandshake(cfg: serverConfig, kvStore: keyValueStore) {
     port: cfg.replicaOfPort,
     transport: "tcp",
   });
+  const buffer = new Uint8Array(1024);
   await connection.write(encodeArray(["ping"]));
+  await connection.read(buffer);
+  await connection.write(encodeArray(["replconf", "listening-port", cfg.port.toString()]));
+  await connection.read(buffer);
+  await connection.write(encodeArray(["replconf", "capa", "psync2"]));
+  await connection.read(buffer);
 }
