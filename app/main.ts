@@ -1,6 +1,5 @@
-import * as net from "node:net";
 import * as path from "jsr:@std/path";
-import * as bytes from "https://deno.land/std@0.207.0/bytes/mod.ts";
+import { iterateReader } from "@std/io/iterate-reader";
 
 type keyValueStore = {
   [key: string]: {
@@ -14,12 +13,12 @@ type serverConfig = {
   dbfilename: string;
 };
 
-function main() {
-  const ClientTimeout = 1000;
-  const ServerTimeout = 1000;
+const encoder = new TextEncoder();
+const decoder = new TextDecoder();
+const strToBytes = encoder.encode.bind(encoder);
+const bytesToStr = decoder.decode.bind(decoder);
 
-  const server: net.Server = net.createServer();
-
+async function main() {
   const cfg: serverConfig = {
     dir: "",
     dbfilename: "",
@@ -37,131 +36,128 @@ function main() {
 
   const kvStore = loadRdb(cfg);
 
-  server.on("connection", (connection: net.Socket) => {
-    console.log("client connected");
-    connection.on("close", () => {
-      console.log("client disconnected");
-      connection.end();
-    });
-    connection.on("data", (data) => {
-      const cmd = decodeResp(data.toString());
-      console.log(cmd);
-      switch (cmd[0].toUpperCase()) {
-        case "PING":
-          connection.write(encodeSimple("PONG"));
-          break;
-        case "ECHO":
-          connection.write(encodeBulk(cmd[1]));
-          break;
-        case "SET":
-          kvStore[cmd[1]] = { value: cmd[2] };
-          if (cmd.length === 5 && cmd[3].toUpperCase() === "PX") {
-            const durationInMs = parseInt(cmd[4], 10);
-            const t = new Date();
-            t.setMilliseconds(t.getMilliseconds() + durationInMs);
-            kvStore[cmd[1]].expiration = t;
-          }
-          connection.write(encodeSimple("OK"));
-          break;
-        case "GET":
-          if (Object.hasOwn(kvStore, cmd[1])) {
-            const entry = kvStore[cmd[1]];
-            const now = new Date();
-            if ((entry.expiration ?? now) < now) {
-              delete kvStore[cmd[1]];
-              connection.write(encodeNull());
-            } else {
-              connection.write(encodeBulk(entry.value));
-            }
-          } else {
-            connection.write(encodeNull());
-          }
-          break;
-        case "KEYS":
-          connection.write(encodeArray(Object.keys(kvStore)));
-          break;
-        case "CONFIG":
-          if (cmd.length == 3 && cmd[1].toUpperCase() === "GET") {
-            switch (cmd[2].toLowerCase()) {
-              case "dir":
-                connection.write(encodeArray(["dir", cfg.dir]));
-                break;
-              case "dbfilename":
-                connection.write(encodeArray(["dbfilename", cfg.dbfilename]));
-                break;
-              default:
-                connection.write(encodeError("not found"));
-                break;
-            }
-          } else {
-            connection.write(encodeError("action not implemented"));
-          }
-          break;
-        default:
-          connection.write(encodeError("command not implemented"));
-      }
-    });
-    setTimeout(() => connection.end(), ClientTimeout);
+  const listener = Deno.listen({
+    hostname: "127.0.0.1",
+    port: 6379,
+    transport: "tcp",
   });
 
-  server.on("error", (err) => {
-    throw err;
-  });
-
-  server.listen(6379, "127.0.0.1", () => {
-    console.log("listening for connections");
-  });
-
-  setTimeout(() => server.close(), ServerTimeout);
+  for await (const connection of listener) {
+    handleConnection(connection, cfg, kvStore);
+  }
 }
 
-function decodeResp(s: string): string[] {
+async function handleConnection(
+  connection: Deno.TcpConn,
+  cfg: serverConfig,
+  kvStore: keyValueStore,
+) {
+  console.log("client connected");
+  for await (const data of iterateReader(connection)) {
+    const cmd = decodeResp(data);
+    console.log(cmd);
+    switch (cmd[0].toUpperCase()) {
+      case "PING":
+        await connection.write(encodeSimple("PONG"));
+        break;
+      case "ECHO":
+        await connection.write(encodeBulk(cmd[1]));
+        break;
+      case "SET":
+        kvStore[cmd[1]] = { value: cmd[2] };
+        if (cmd.length === 5 && cmd[3].toUpperCase() === "PX") {
+          const durationInMs = parseInt(cmd[4], 10);
+          const t = new Date();
+          t.setMilliseconds(t.getMilliseconds() + durationInMs);
+          kvStore[cmd[1]].expiration = t;
+        }
+        await connection.write(encodeSimple("OK"));
+        break;
+      case "GET":
+        if (Object.hasOwn(kvStore, cmd[1])) {
+          const entry = kvStore[cmd[1]];
+          const now = new Date();
+          if ((entry.expiration ?? now) < now) {
+            delete kvStore[cmd[1]];
+            await connection.write(encodeNull());
+          } else {
+            await connection.write(encodeBulk(entry.value));
+          }
+        } else {
+          await connection.write(encodeNull());
+        }
+        break;
+      case "KEYS":
+        await connection.write(encodeArray(Object.keys(kvStore)));
+        break;
+      case "CONFIG":
+        if (cmd.length == 3 && cmd[1].toUpperCase() === "GET") {
+          switch (cmd[2].toLowerCase()) {
+            case "dir":
+              await connection.write(encodeArray(["dir", cfg.dir]));
+              break;
+            case "dbfilename":
+              await connection.write(
+                encodeArray(["dbfilename", cfg.dbfilename]),
+              );
+              break;
+            default:
+              await connection.write(encodeError("not found"));
+              break;
+          }
+        } else {
+          await connection.write(encodeError("action not implemented"));
+        }
+        break;
+      default:
+        await connection.write(encodeError("command not implemented"));
+    }
+  }
+  console.log("client disconnected");
+}
+
+function decodeResp(data: Uint8Array): string[] {
   const result = [];
-  const parts = s.split("\r\n");
+  const parts = bytesToStr(data).split("\r\n");
   const arrSize = parseInt(parts[0].replace("*", ""), 10);
-  //console.log("arrSize:", arrSize);
+  console.log("arrSize:", arrSize);
+  console.log("parts", parts);
   for (let i = 0; i < arrSize; i++) {
     const strSize = parseInt(parts[i * 2 + 1].replace("$", ""), 10);
     const str = parts[i * 2 + 2];
-    //console.log("str:", strSize, str.length, str);
+    if (str.length != strSize) {
+      throw Error("string size mismatch");
+    }
     result.push(str);
   }
   return result;
 }
 
-function encodeSimple(s: string): string {
-  return `+${s}\r\n`;
+function encodeSimple(s: string): Uint8Array {
+  return strToBytes(`+${s}\r\n`);
 }
 
-function encodeBulk(s: string): string {
+function encodeBulk(s: string): Uint8Array {
   if (s.length === 0) {
     return encodeNull();
   }
-  return `\$${s.length}\r\n${s}\r\n`;
+  return strToBytes(`\$${s.length}\r\n${s}\r\n`);
 }
 
-function encodeNull(): string {
-  return `$-1\r\n`;
+function encodeNull(): Uint8Array {
+  return strToBytes(`$-1\r\n`);
 }
 
-function encodeError(s: string): string {
-  return `-${s}\r\n`;
+function encodeError(s: string): Uint8Array {
+  return strToBytes(`-${s}\r\n`);
 }
 
-function encodeArray(arr: string[]): string {
+function encodeArray(arr: string[]): Uint8Array {
   let result = `*${arr.length}\r\n`;
-  for (const value of arr) {
-    result += encodeBulk(value);
+  for (const s of arr) {
+    result += `\$${s.length}\r\n${s}\r\n`;
   }
-  return result;
-}
-
-function stringToBytes(s: string): Uint8Array {
-  return new Uint8Array(s.split("").map((s: string) => s.charCodeAt(0)));
-}
-
-function bytesToString(arr: Uint8Array): string {
-  return Array.from(arr).map((n) => String.fromCharCode(n)).join("");
+  return strToBytes(result);
 }
 
 function loadRdb(cfg: serverConfig): keyValueStore {
@@ -197,11 +193,14 @@ class RDBParser {
       return;
     }
 
-    if (!bytes.startsWith(this.data, stringToBytes("REDIS"))) {
+    const header = bytesToStr(this.data.slice(0, 5));
+    if (header !== "REDIS") {
       console.log(`not a RDB file: ${this.path}`);
       return;
     }
-    console.log("Version:", bytesToString(this.data.slice(5, 9)));
+
+    const version = bytesToStr(this.data.slice(5, 9));
+    console.log("Version:", version);
 
     // skipping header and version
     this.index = 9;
@@ -346,7 +345,7 @@ class RDBParser {
 
   readEncodedString(): string {
     const length = this.readEncodedInt();
-    const str = bytesToString(this.data.slice(this.index, this.index + length));
+    const str = bytesToStr(this.data.slice(this.index, this.index + length));
     this.index += length;
     return str;
   }

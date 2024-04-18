@@ -1,0 +1,41 @@
+{
+  "version": "3",
+  "packages": {
+    "specifiers": {
+      "jsr:@std/assert@^0.223.0": "jsr:@std/assert@0.223.0",
+      "jsr:@std/io@^0.223.0": "jsr:@std/io@0.223.0",
+      "jsr:@std/path": "jsr:@std/path@0.223.0"
+    },
+    "jsr": {
+      "@std/assert@0.223.0": {
+        "integrity": "eb8d6d879d76e1cc431205bd346ed4d88dc051c6366365b1af47034b0670be24"
+      },
+      "@std/io@0.223.0": {
+        "integrity": "2d8c3c2ab3a515619b90da2c6ff5ea7b75a94383259ef4d02116b228393f84f1"
+      },
+      "@std/path@0.223.0": {
+        "integrity": "593963402d7e6597f5a6e620931661053572c982fc014000459edc1f93cc3989",
+        "dependencies": [
+          "jsr:@std/assert@^0.223.0"
+        ]
+      }
+    }
+  },
+  "remote": {
+    "https://deno.land/std@0.207.0/bytes/concat.ts": "d3d420badeb4f26a0f2f3ce343725f937326aff1b4634b25341b12b27353aac4",
+    "https://deno.land/std@0.207.0/bytes/copy.ts": "939d89e302a9761dcf1d9c937c7711174ed74c59eef40a1e4569a05c9de88219",
+    "https://deno.land/std@0.207.0/bytes/ends_with.ts": "4228811ebc71615d27f065c54b5e815ec1972538772b0f413c0efe05245b472e",
+    "https://deno.land/std@0.207.0/bytes/equals.ts": "fc190cce412b2136979181b163ec7e05f7e7a947e39102eee4b8c0d62519ddf9",
+    "https://deno.land/std@0.207.0/bytes/includes_needle.ts": "76a8163126fb2f8bf86fd7f22192c3bb04bf6a20b987a095127c2ca08adf3ba6",
+    "https://deno.land/std@0.207.0/bytes/index_of_needle.ts": "9c06610e9611b5647ac25952e71a22e09227c9f1b8cbeeb33399bf8bf8a7f649",
+    "https://deno.land/std@0.207.0/bytes/last_index_of_needle.ts": "f1602f221c3b678bc4f1e1c88a70a15ab7da32c21751dbbc6c957c956951d784",
+    "https://deno.land/std@0.207.0/bytes/mod.ts": "9ed597c10cc61cdcd4cf725ad7ed935f6dc7ff481ba6bcc6d6a47633ea1ae0b8",
+    "https://deno.land/std@0.207.0/bytes/repeat.ts": "6f5e490d8d72bcbf8d84a6bb04690b9b3eb5822c5a11687bca73a2318a842294",
+    "https://deno.land/std@0.207.0/bytes/starts_with.ts": "3e607a70c9c09f5140b7a7f17a695221abcc7244d20af3eb47ccbb63f5885135"
+  },
+  "workspace": {
+    "dependencies": [
+      "jsr:@std/io@^0.223.0"
+    ]
+  }
+}
