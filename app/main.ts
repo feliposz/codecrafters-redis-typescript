@@ -12,6 +12,7 @@ type serverConfig = {
   dir: string;
   dbfilename: string;
   port: number;
+  role: string;
 };
 
 const encoder = new TextEncoder();
@@ -24,6 +25,7 @@ async function main() {
     dir: "",
     dbfilename: "",
     port: 6379,
+    role: "master",
   };
 
   for (let i = 0; i < Deno.args.length; i++) {
@@ -116,6 +118,9 @@ async function handleConnection(
         } else {
           await connection.write(encodeError("action not implemented"));
         }
+        break;
+      case "INFO":
+        await connection.write(encodeBulk(`role:${cfg.role}`));
         break;
       default:
         await connection.write(encodeError("command not implemented"));
