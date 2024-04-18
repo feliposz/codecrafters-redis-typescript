@@ -4,10 +4,19 @@ import { iterateReader } from "@std/io/iterate-reader";
 
 type keyValueStore = {
   [key: string]: {
-    value: string;
+    type: "string" | "stream";
     expiration?: Date;
-    type: "string";
+    value: string;
+    stream?: streamData;
   };
+};
+
+type streamData = {
+  first: [number, number];
+  last: [number, number];
+  [timestamp: number]: {
+    [sequence: number]: string[]
+  }
 };
 
 type serverConfig = {
@@ -60,11 +69,13 @@ async function main() {
         break;
       case "--port":
         cfg.port = parseInt(Deno.args[i + 1], 10);
+        i++;
         break;
       case "--replicaof":
         cfg.role = "slave";
         cfg.replicaOfHost = Deno.args[i + 1];
         cfg.replicaOfPort = parseInt(Deno.args[i + 2], 10);
+        i += 2;
         break;
     }
   }
@@ -220,6 +231,24 @@ async function handleConnection(
             await connection.write(encodeSimple("none"));
           }
           break;
+
+        case "XADD": {
+          const streamKey = cmd[1];
+          const id = cmd[2];
+          const idParts = id.split("-");
+          const timestamp = parseInt(idParts[0], 10);
+          const sequence = parseInt(idParts[1], 10);
+          if (!(streamKey in kvStore)) {
+            kvStore[streamKey] = { type: "stream", value: "", stream: { first: [timestamp, sequence], last: [timestamp, sequence] } };
+          }
+          const stream: streamData = kvStore[streamKey].stream!;
+          if (!(timestamp in stream)) {
+            stream[timestamp] = {};
+          }
+          stream[timestamp][sequence] = cmd.slice(3);
+          await connection.write(encodeBulk(id));
+          break;
+        }
 
         default:
           await connection.write(encodeError("command not implemented"));
