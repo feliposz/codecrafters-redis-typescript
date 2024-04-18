@@ -76,6 +76,8 @@ async function main() {
     transport: "tcp",
   });
 
+  console.log(`listening on ${listener.addr.hostname}:${listener.addr.port}`);
+
   for await (const connection of listener) {
     handleConnection(connection, cfg, kvStore, true);
   }
@@ -439,8 +441,6 @@ function genReplid(): string {
   return result.join("");
 }
 
-main();
-
 async function replicaHandshake(cfg: serverConfig, kvStore: keyValueStore) {
   if (cfg.role === "master") {
     return;
@@ -479,13 +479,20 @@ async function replicaHandshake(cfg: serverConfig, kvStore: keyValueStore) {
 
   await connection.write(encodeArray(["psync", "?", "-1"]));
   bytesRead = await connection.read(buffer);
+  if (bytesRead == null) {
+    throw Error("psync got no response");
+  }
   console.log(
     "Handshake 3a (psync): ",
     bytesToStr(buffer.slice(0, bytesRead ?? 0)),
   );
 
-  bytesRead = await connection.read(buffer);
-  console.log("Handshake 3b (rdb file): bytes received", bytesRead);
+  // HACK: check if response ended in FULLRESYNC or RDB file...
+  // TODO: properly handle any situation here
+  if (buffer[bytesRead-2] === "\r".codePointAt(0) && buffer[bytesRead-1] === "\n".codePointAt(0)) {
+    bytesRead = await connection.read(buffer);
+    console.log("Handshake 3b (rdb file): bytes received", bytesRead);
+  }
 
   handleConnection(connection, cfg, kvStore, false);
 }
@@ -502,3 +509,5 @@ function propagate(replicas: replicaState[], cmd: string[]) {
     })(replica);
   }
 }
+
+main();
