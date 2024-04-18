@@ -15,6 +15,8 @@ type serverConfig = {
   role: string;
   replicaOfHost: string;
   replicaOfPort: number;
+  replid: string;
+  offset: number;
 };
 
 const encoder = new TextEncoder();
@@ -30,6 +32,8 @@ async function main() {
     role: "master",
     replicaOfHost: "",
     replicaOfPort: 0,
+    replid: genReplid(),
+    offset: 0,
   };
 
   for (let i = 0; i < Deno.args.length; i++) {
@@ -50,7 +54,7 @@ async function main() {
         cfg.replicaOfHost = Deno.args[i + 1];
         cfg.replicaOfPort = parseInt(Deno.args[i + 2], 10);
         break;
-      }
+    }
   }
 
   const kvStore = loadRdb(cfg);
@@ -129,7 +133,11 @@ async function handleConnection(
         }
         break;
       case "INFO":
-        await connection.write(encodeBulk(`role:${cfg.role}`));
+        await connection.write(
+          encodeBulk(
+            `role:${cfg.role}\r\nmaster_replid:${cfg.replid}\r\nmaster_repl_offset:${cfg.offset}`,
+          ),
+        );
         break;
       default:
         await connection.write(encodeError("command not implemented"));
@@ -375,6 +383,16 @@ class RDBParser {
   getEntries(): keyValueStore {
     return this.entries;
   }
+}
+
+function genReplid(): string {
+  const digits = "0123456789abcdef";
+  const result = [];
+  for (let i = 0; i < 40; i++) {
+    const digitIndex = Math.floor(Math.random() * digits.length);
+    result.push(digits[digitIndex]);
+  }
+  return result.join("");
 }
 
 main();
