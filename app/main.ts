@@ -6,6 +6,7 @@ type keyValueStore = {
   [key: string]: {
     value: string;
     expiration?: Date;
+    type: "string";
   };
 };
 
@@ -110,7 +111,7 @@ async function handleConnection(
           break;
 
         case "SET":
-          kvStore[cmd[1]] = { value: cmd[2] };
+          kvStore[cmd[1]] = { value: cmd[2], type: "string" };
           if (cmd.length === 5 && cmd[3].toUpperCase() === "PX") {
             const durationInMs = parseInt(cmd[4], 10);
             const t = new Date();
@@ -204,6 +205,21 @@ async function handleConnection(
           await connection.write(encodeInt(ackCount));
           break;
         }
+
+        case "TYPE":
+          if (Object.hasOwn(kvStore, cmd[1])) {
+            const entry = kvStore[cmd[1]];
+            const now = new Date();
+            if ((entry.expiration ?? now) < now) {
+              delete kvStore[cmd[1]];
+              await connection.write(encodeSimple("none"));
+            } else {
+              await connection.write(encodeSimple(entry.type));
+            }
+          } else {
+            await connection.write(encodeSimple("none"));
+          }
+          break;
 
         default:
           await connection.write(encodeError("command not implemented"));
@@ -400,7 +416,7 @@ class RDBParser {
           const value = this.readEncodedString();
           console.log(key, value, expiration);
           if ((expiration ?? now) >= now) {
-            this.entries[key] = { value, expiration };
+            this.entries[key] = { value, expiration, type: "string" };
           }
           break;
         }
