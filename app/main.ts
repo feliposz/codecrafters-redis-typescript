@@ -18,6 +18,13 @@ type serverConfig = {
   replicaOfPort: number;
   replid: string;
   offset: number;
+  replicas: replicaState[];
+};
+
+type replicaState = {
+  connection: Deno.TcpConn;
+  offset: number;
+  active: boolean;
 };
 
 const encoder = new TextEncoder();
@@ -35,6 +42,7 @@ async function main() {
     replicaOfPort: 0,
     replid: genReplid(),
     offset: 0,
+    replicas: [],
   };
 
   for (let i = 0; i < Deno.args.length; i++) {
@@ -98,6 +106,7 @@ async function handleConnection(
           kvStore[cmd[1]].expiration = t;
         }
         await connection.write(encodeSimple("OK"));
+        propagate(cfg.replicas, cmd);
         break;
       case "GET":
         if (Object.hasOwn(kvStore, cmd[1])) {
@@ -154,6 +163,7 @@ async function handleConnection(
         );
         await connection.write(strToBytes(`\$${emptyRDB.length}\r\n`));
         await connection.write(emptyRDB);
+        cfg.replicas.push({ connection, offset: 0, active: true });
         break;
       }
       default:
@@ -435,4 +445,17 @@ async function replicaHandshake(cfg: serverConfig, kvStore: keyValueStore) {
   await connection.read(buffer);
   await connection.write(encodeArray(["psync", "?", "-1"]));
   await connection.read(buffer);
+}
+
+function propagate(replicas: replicaState[], cmd: string[]) {
+  replicas = replicas.filter((r) => r.active);
+  for (const replica of replicas) {
+    (async function (replica) {
+      try {
+        await replica.connection.write(encodeArray(cmd));
+      } catch {
+        replica.active = false;
+      }
+    })(replica);
+  }
 }
