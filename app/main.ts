@@ -94,15 +94,19 @@ async function handleConnection(
     const commands = decodeCommands(data);
     for (const cmd of commands) {
       console.log(cmd);
+
       switch (cmd[0].toUpperCase()) {
+
         case "PING":
           if (sendReply) {
             await connection.write(encodeSimple("PONG"));
           }
           break;
+
         case "ECHO":
           await connection.write(encodeBulk(cmd[1]));
           break;
+
         case "SET":
           kvStore[cmd[1]] = { value: cmd[2] };
           if (cmd.length === 5 && cmd[3].toUpperCase() === "PX") {
@@ -116,6 +120,7 @@ async function handleConnection(
             propagate(cfg.replicas, cmd);
           }
           break;
+
         case "GET":
           if (Object.hasOwn(kvStore, cmd[1])) {
             const entry = kvStore[cmd[1]];
@@ -130,9 +135,11 @@ async function handleConnection(
             await connection.write(encodeNull());
           }
           break;
+
         case "KEYS":
           await connection.write(encodeArray(Object.keys(kvStore)));
           break;
+
         case "CONFIG":
           if (cmd.length == 3 && cmd[1].toUpperCase() === "GET") {
             switch (cmd[2].toLowerCase()) {
@@ -152,6 +159,7 @@ async function handleConnection(
             await connection.write(encodeError("action not implemented"));
           }
           break;
+
         case "INFO":
           await connection.write(
             encodeBulk(
@@ -159,6 +167,7 @@ async function handleConnection(
             ),
           );
           break;
+
         case "REPLCONF":
           if (cmd[1].toUpperCase() === "GETACK") {
             await connection.write(
@@ -168,6 +177,7 @@ async function handleConnection(
             await connection.write(encodeBulk("OK"));
           }
           break;
+
         case "PSYNC": {
           await connection.write(
             encodeSimple(`FULLRESYNC ${cfg.replid} 0`),
@@ -180,9 +190,16 @@ async function handleConnection(
           cfg.replicas.push({ connection, offset: 0, active: true });
           break;
         }
+
+        case "WAIT":
+          await connection.write(encodeInt(0));
+          break;
+
         default:
           await connection.write(encodeError("command not implemented"));
+
       }
+
       // rebuild the original command to get the offset of processed commands...
       cfg.offset += encodeArray(cmd).length;
     }
@@ -232,6 +249,10 @@ function encodeBulk(s: string): Uint8Array {
 
 function encodeNull(): Uint8Array {
   return strToBytes(`$-1\r\n`);
+}
+
+function encodeInt(x: number): Uint8Array {
+  return strToBytes(`:${x}\r\n`);
 }
 
 function encodeError(s: string): Uint8Array {
