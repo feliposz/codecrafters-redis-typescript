@@ -158,7 +158,13 @@ async function handleConnection(
           );
           break;
         case "REPLCONF":
-          await connection.write(encodeBulk("OK"));
+          if (cmd[1].toUpperCase() === "GETACK") {
+            await connection.write(
+              encodeArray(["REPLCONF", "ACK", cfg.offset.toString()]),
+            );
+          } else {
+            await connection.write(encodeBulk("OK"));
+          }
           break;
         case "PSYNC": {
           await connection.write(
@@ -478,21 +484,39 @@ async function replicaHandshake(cfg: serverConfig, kvStore: keyValueStore) {
   );
 
   await connection.write(encodeArray(["psync", "?", "-1"]));
-  bytesRead = await connection.read(buffer);
+
+  // limit size of buffer to only deal with the +FULLRESYNC...
+  const resyncMsgBuffer = new Uint8Array(58);
+  bytesRead = await connection.read(resyncMsgBuffer);
   if (bytesRead == null) {
     throw Error("psync got no response");
   }
-  console.log(
-    "Handshake 3a (psync): ",
-    bytesToStr(buffer.slice(0, bytesRead ?? 0)),
-  );
+  console.log("Handshake 3a (psync): ", bytesToStr(resyncMsgBuffer));
 
-  // HACK: check if response ended in FULLRESYNC or RDB file...
-  // TODO: properly handle any situation here
-  if (buffer[bytesRead-2] === "\r".codePointAt(0) && buffer[bytesRead-1] === "\n".codePointAt(0)) {
-    bytesRead = await connection.read(buffer);
-    console.log("Handshake 3b (rdb file): bytes received", bytesRead);
+  // read one byte at a time to find out the actual size of the RDB file to receive
+  const byte = new Uint8Array(1);
+  let rdbSize = 0;
+  while (true) {
+    bytesRead = await connection.read(byte);
+    if ((bytesRead ?? 0) === 0) {
+      throw Error("unexpected EOF from master");
+    }
+    if (byte[0] === 0x0a) { // LF = '\n'
+      break;
+    } else if (byte[0] == 0x0d) { // CR = '\r'
+      continue;
+    } else if (byte[0] == 0x24) { // '$'
+      continue;
+    } else if (byte[0] >= 0x30 && byte[0] <= 0x39) { // digits '0'-'9'
+      rdbSize = rdbSize * 10 + byte[0] - 0x30;
+    }
   }
+
+  // read the RDB file exactly, leaving further messages/commands on the buffer
+  const rdbBuffer = new Uint8Array(rdbSize);
+  bytesRead = await connection.read(rdbBuffer);
+  console.log("Handshake 3b (rdb file): bytes received", bytesRead);
+  console.log(bytesToStr(rdbBuffer.slice(0, bytesRead ?? 0)));
 
   handleConnection(connection, cfg, kvStore, false);
 }
