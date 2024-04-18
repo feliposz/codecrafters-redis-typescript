@@ -1,4 +1,5 @@
 import * as path from "jsr:@std/path";
+import * as base64 from "jsr:@std/encoding/base64";
 import { iterateReader } from "@std/io/iterate-reader";
 
 type keyValueStore = {
@@ -144,11 +145,17 @@ async function handleConnection(
       case "REPLCONF":
         await connection.write(encodeBulk("OK"));
         break;
-      case "PSYNC":
+      case "PSYNC": {
         await connection.write(
           encodeSimple(`FULLRESYNC ${cfg.replid} ${cfg.offset}`),
         );
+        const emptyRDB = base64.decodeBase64(
+          "UkVESVMwMDEx+glyZWRpcy12ZXIFNy4yLjD6CnJlZGlzLWJpdHPAQPoFY3RpbWXCbQi8ZfoIdXNlZC1tZW3CsMQQAPoIYW9mLWJhc2XAAP/wbjv+wP9aog==",
+        );
+        await connection.write(strToBytes(`\$${emptyRDB.length}\r\n`));
+        await connection.write(emptyRDB);
         break;
+      }
       default:
         await connection.write(encodeError("command not implemented"));
     }

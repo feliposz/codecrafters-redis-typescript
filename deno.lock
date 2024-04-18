@@ -3,12 +3,16 @@
   "packages": {
     "specifiers": {
       "jsr:@std/assert@^0.223.0": "jsr:@std/assert@0.223.0",
+      "jsr:@std/encoding": "jsr:@std/encoding@0.223.0",
       "jsr:@std/io@^0.223.0": "jsr:@std/io@0.223.0",
       "jsr:@std/path": "jsr:@std/path@0.223.0"
     },
     "jsr": {
       "@std/assert@0.223.0": {
         "integrity": "eb8d6d879d76e1cc431205bd346ed4d88dc051c6366365b1af47034b0670be24"
+      },
+      "@std/encoding@0.223.0": {
+        "integrity": "2b5615a75e00337ce113f34cf2f9b8c18182c751a8dcc8b1a2c2fc0e117bef00"
       },
       "@std/io@0.223.0": {
         "integrity": "2d8c3c2ab3a515619b90da2c6ff5ea7b75a94383259ef4d02116b228393f84f1"
