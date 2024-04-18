@@ -59,6 +59,8 @@ async function main() {
 
   const kvStore = loadRdb(cfg);
 
+  await replicaHandshake(cfg, kvStore);
+
   const listener = Deno.listen({
     hostname: "127.0.0.1",
     port: cfg.port,
@@ -396,3 +398,16 @@ function genReplid(): string {
 }
 
 main();
+
+async function replicaHandshake(cfg: serverConfig, kvStore: keyValueStore) {
+  if (cfg.role === "master") {
+    return;
+  }
+
+  const connection = await Deno.connect({
+    hostname: cfg.replicaOfHost,
+    port: cfg.replicaOfPort,
+    transport: "tcp",
+  });
+  await connection.write(encodeArray(["ping"]));
+}
