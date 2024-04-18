@@ -144,6 +144,11 @@ async function handleConnection(
       case "REPLCONF":
         await connection.write(encodeBulk("OK"));
         break;
+      case "PSYNC":
+        await connection.write(
+          encodeSimple(`FULLRESYNC ${cfg.replid} ${cfg.offset}`),
+        );
+        break;
       default:
         await connection.write(encodeError("command not implemented"));
     }
@@ -415,7 +420,9 @@ async function replicaHandshake(cfg: serverConfig, kvStore: keyValueStore) {
   const buffer = new Uint8Array(1024);
   await connection.write(encodeArray(["ping"]));
   await connection.read(buffer);
-  await connection.write(encodeArray(["replconf", "listening-port", cfg.port.toString()]));
+  await connection.write(
+    encodeArray(["replconf", "listening-port", cfg.port.toString()]),
+  );
   await connection.read(buffer);
   await connection.write(encodeArray(["replconf", "capa", "psync2"]));
   await connection.read(buffer);
