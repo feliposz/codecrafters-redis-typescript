@@ -738,13 +738,22 @@ async function handleStreamRange(
 
   const stream: streamData = kvStore[streamKey].stream!;
 
-  const startTimestamp = parseInt(start, 10);
-  const endTimestamp = parseInt(end, 10);
+  let startTimestamp = 0;
+  let endTimestamp = Infinity;
   let startSequence = 0;
   let endSequence = Infinity;
-  if (start.match(/\d+-\d+/)) {
-    startSequence = parseInt(start.split("-")[1], 10);
+
+  if (start === "-") {
+    startTimestamp = stream.first[0];
+    startSequence = stream.first[1];
+  } else {
+    startTimestamp = parseInt(start, 10);
+    if (start.match(/\d+-\d+/)) {
+      startSequence = parseInt(start.split("-")[1], 10);
+    }
   }
+
+  endTimestamp = parseInt(end, 10);
   if (end.match(/\d+-\d+/)) {
     endSequence = parseInt(end.split("-")[1], 10);
   }
