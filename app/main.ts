@@ -241,6 +241,10 @@ async function handleConnection(
           await handleStreamRange(kvStore, connection, cmd);
           break;
 
+        case "XREAD":
+          await handleStreamRead(kvStore, connection, cmd);
+          break;
+
         default:
           await connection.write(encodeError("command not implemented"));
       }
@@ -798,6 +802,100 @@ async function handleStreamRange(
       encodedResult += `\$${value.length}\r\n${value}\r\n`;
     }
   }
+
+  await connection.write(strToBytes(encodedResult));
+}
+
+async function handleStreamRead(
+  kvStore: keyValueStore,
+  connection: Deno.TcpConn,
+  cmd: string[],
+) {
+  const result: [string, [string, string[]][]][] = [];
+
+  let firstStreamArgIndex = -1;
+  let firstIdArgIndex = -1;
+  for (let i = 0; i < cmd.length; i++) {
+    if (cmd[i].toUpperCase() === "STREAMS") {
+      firstStreamArgIndex = i + 1;
+      break;
+    }
+  }
+  if (firstStreamArgIndex === -1) {
+    await connection.write(encodeError("ERR No stream key argument provided"));
+    return;
+  }
+  if ((cmd.length - firstStreamArgIndex) % 2 === 1) {
+    await connection.write(encodeError("ERR Missing arguments"));
+    return;
+  }
+  firstIdArgIndex = firstStreamArgIndex +
+    (cmd.length - firstStreamArgIndex) / 2;
+
+  const streamKey = cmd[firstStreamArgIndex];
+  const start = cmd[firstIdArgIndex];
+
+  console.log(streamKey, start);
+
+  if (!(streamKey in kvStore)) {
+    await connection.write(encodeArray([]));
+    return;
+  }
+
+  const stream: streamData = kvStore[streamKey].stream!;
+
+  const streamEntries: [string, string[]][] = [];
+
+  let startTimestamp = 0;
+  let startSequence = 0;
+
+  startTimestamp = parseInt(start, 10);
+  if (start.match(/\d+-\d+/)) {
+    startSequence = parseInt(start.split("-")[1], 10);
+  }
+
+  console.log(startTimestamp, startSequence);
+
+  for (
+    const timestamp of Object.keys(stream.data).map((n) => parseInt(n, 10))
+  ) {
+    if (timestamp >= startTimestamp) {
+      for (
+        const sequence of Object.keys(stream.data[timestamp]).map((n) =>
+          parseInt(n, 10)
+        )
+      ) {
+        if (
+          (timestamp > startTimestamp ||
+            (timestamp === startTimestamp && sequence > startSequence))
+        ) {
+          streamEntries.push([
+            `${timestamp}-${sequence}`,
+            stream.data[timestamp][sequence],
+          ]);
+        }
+      }
+    }
+  }
+
+  result.push([streamKey, streamEntries]);
+
+  console.log(result);
+
+  let encodedResult = `*${result.length}\r\n`;
+  for (const stream of result) {
+    encodedResult += `*2\r\n\$${stream[0].length}\r\n${stream[0]}\r\n`;
+    encodedResult += `*${stream[1].length}\r\n`;
+    for (const entry of stream[1]) {
+      encodedResult += `*2\r\n\$${entry[0].length}\r\n${entry[0]}\r\n`;
+      encodedResult += `*${entry[1].length}\r\n`;
+      for (const value of entry[1]) {
+        encodedResult += `\$${value.length}\r\n${value}\r\n`;
+      }
+    }
+  }
+
+  console.log(encodedResult);
 
   await connection.write(strToBytes(encodedResult));
 }
