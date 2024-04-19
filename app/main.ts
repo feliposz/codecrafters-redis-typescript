@@ -15,8 +15,8 @@ type streamData = {
   first: [number, number];
   last: [number, number];
   [timestamp: number]: {
-    [sequence: number]: string[]
-  }
+    [sequence: number]: string[];
+  };
 };
 
 type serverConfig = {
@@ -110,7 +110,6 @@ async function handleConnection(
       console.log(cmd);
 
       switch (cmd[0].toUpperCase()) {
-
         case "PING":
           if (sendReply) {
             await connection.write(encodeSimple("PONG"));
@@ -232,27 +231,12 @@ async function handleConnection(
           }
           break;
 
-        case "XADD": {
-          const streamKey = cmd[1];
-          const id = cmd[2];
-          const idParts = id.split("-");
-          const timestamp = parseInt(idParts[0], 10);
-          const sequence = parseInt(idParts[1], 10);
-          if (!(streamKey in kvStore)) {
-            kvStore[streamKey] = { type: "stream", value: "", stream: { first: [timestamp, sequence], last: [timestamp, sequence] } };
-          }
-          const stream: streamData = kvStore[streamKey].stream!;
-          if (!(timestamp in stream)) {
-            stream[timestamp] = {};
-          }
-          stream[timestamp][sequence] = cmd.slice(3);
-          await connection.write(encodeBulk(id));
+        case "XADD":
+          await handleStreamAdd(kvStore, connection, cmd);
           break;
-        }
 
         default:
           await connection.write(encodeError("command not implemented"));
-
       }
 
       // rebuild the original command to get the offset of processed commands...
@@ -617,11 +601,14 @@ function propagate(cfg: serverConfig, cmd: string[]) {
 
 main();
 
-function handleWait(cfg: serverConfig, count: number, timeout: number): Promise<number> {
+function handleWait(
+  cfg: serverConfig,
+  count: number,
+  timeout: number,
+): Promise<number> {
   cfg.ackCount = 0;
   cfg.replicas = cfg.replicas.filter((r) => r.active);
   return new Promise((resolve) => {
-
     const timer = setTimeout(() => {
       console.log("timeout! count: ", cfg.ackCount);
       resolve(cfg.ackCount);
@@ -642,7 +629,9 @@ function handleWait(cfg: serverConfig, count: number, timeout: number): Promise<
         (async function (replica) {
           try {
             console.log("probing replica with offset: ", replica.offset);
-            const bytesSent = await replica.connection.write(encodeArray(["REPLCONF", "GETACK", "*"]));
+            const bytesSent = await replica.connection.write(
+              encodeArray(["REPLCONF", "GETACK", "*"]),
+            );
             replica.offset += bytesSent;
             const tmpBuffer = new Uint8Array(128);
             await replica.connection.read(tmpBuffer); // Ignoring response for now
@@ -658,6 +647,55 @@ function handleWait(cfg: serverConfig, count: number, timeout: number): Promise<
     }
 
     acknowledge(0);
-
   });
+}
+
+async function handleStreamAdd(
+  kvStore: keyValueStore,
+  connection: Deno.TcpConn,
+  cmd: string[],
+) {
+  const streamKey = cmd[1];
+  const id = cmd[2];
+  const idParts = id.split("-");
+  const timestamp = parseInt(idParts[0], 10);
+  const sequence = parseInt(idParts[1], 10);
+
+  if (timestamp === 0 && sequence === 0) {
+    await connection.write(
+      encodeError("ERR The ID specified in XADD must be greater than 0-0"),
+    );
+  }
+
+  if (!(streamKey in kvStore)) {
+    kvStore[streamKey] = {
+      type: "stream",
+      value: "",
+      stream: { first: [0, 0], last: [0, 0] },
+    };
+  }
+
+  const stream: streamData = kvStore[streamKey].stream!;
+
+  if (
+    timestamp < stream.last[0] ||
+    (timestamp === stream.last[0] && sequence <= stream.last[1])
+  ) {
+    await connection.write(
+      encodeError(
+        "ERR The ID specified in XADD is equal or smaller than the target stream top item",
+      ),
+    );
+    return;
+  }
+
+  stream.last[0] = timestamp;
+  stream.last[1] = sequence;
+
+  if (!(timestamp in stream)) {
+    stream[timestamp] = {};
+  }
+  stream[timestamp][sequence] = cmd.slice(3);
+
+  await connection.write(encodeBulk(`${timestamp}-${sequence}`));
 }
