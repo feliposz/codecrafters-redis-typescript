@@ -14,8 +14,10 @@ type keyValueStore = {
 type streamData = {
   first: [number, number];
   last: [number, number];
-  [timestamp: number]: {
-    [sequence: number]: string[];
+  data: {
+    [timestamp: number]: {
+      [sequence: number]: string[];
+    };
   };
 };
 
@@ -233,6 +235,10 @@ async function handleConnection(
 
         case "XADD":
           await handleStreamAdd(kvStore, connection, cmd);
+          break;
+
+        case "XRANGE":
+          await handleStreamRange(kvStore, connection, cmd);
           break;
 
         default:
@@ -662,7 +668,7 @@ async function handleStreamAdd(
     kvStore[streamKey] = {
       type: "stream",
       value: "",
-      stream: { first: [0, 0], last: [0, 0] },
+      stream: { first: [0, 0], last: [0, 0], data: {} },
     };
   }
 
@@ -709,10 +715,75 @@ async function handleStreamAdd(
   stream.last[0] = timestamp;
   stream.last[1] = sequence;
 
-  if (!(timestamp in stream)) {
-    stream[timestamp] = {};
+  if (!(timestamp in stream.data)) {
+    stream.data[timestamp] = {};
   }
-  stream[timestamp][sequence] = cmd.slice(3);
+  stream.data[timestamp][sequence] = cmd.slice(3);
 
   await connection.write(encodeBulk(`${timestamp}-${sequence}`));
+}
+
+async function handleStreamRange(
+  kvStore: keyValueStore,
+  connection: Deno.TcpConn,
+  cmd: string[],
+) {
+  const streamKey = cmd[1];
+  const start = cmd[2];
+  const end = cmd[3];
+
+  if (!(streamKey in kvStore)) {
+    await connection.write(encodeArray([]));
+  }
+
+  const stream: streamData = kvStore[streamKey].stream!;
+
+  const startTimestamp = parseInt(start, 10);
+  const endTimestamp = parseInt(end, 10);
+  let startSequence = 0;
+  let endSequence = Infinity;
+  if (start.match(/\d+-\d+/)) {
+    startSequence = parseInt(start.split("-")[1], 10);
+  }
+  if (end.match(/\d+-\d+/)) {
+    endSequence = parseInt(end.split("-")[1], 10);
+  }
+
+  const result: [string, string[]][] = [];
+
+  for (
+    const timestamp of Object.keys(stream.data).map((n) => parseInt(n, 10))
+  ) {
+    if (timestamp >= startTimestamp && timestamp <= endTimestamp) {
+      for (
+        const sequence of Object.keys(stream.data[timestamp]).map((n) =>
+          parseInt(n, 10)
+        )
+      ) {
+        if (
+          (timestamp > startTimestamp ||
+            (timestamp === startTimestamp && sequence >= startSequence)) &&
+          (timestamp < endTimestamp ||
+            (timestamp === endTimestamp && sequence <= endSequence))
+        ) {
+          result.push([
+            `${timestamp}-${sequence}`,
+            stream.data[timestamp][sequence],
+          ]);
+        }
+      }
+    }
+  }
+
+  let encodedResult = `*${result.length}\r\n`;
+  for (const entry of result) {
+    encodedResult += `*2\r\n\$${entry[0].length}\r\n${entry[0]}\r\n*${
+      entry[1].length
+    }\r\n`;
+    for (const value of entry[1]) {
+      encodedResult += `\$${value.length}\r\n${value}\r\n`;
+    }
+  }
+
+  await connection.write(strToBytes(encodedResult));
 }
