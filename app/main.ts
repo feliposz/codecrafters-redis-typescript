@@ -609,8 +609,6 @@ function propagate(cfg: serverConfig, cmd: string[]) {
   }
 }
 
-main();
-
 function handleWait(
   cfg: serverConfig,
   count: number,
@@ -941,3 +939,5 @@ function sleep(milliseconds: number) {
     setTimeout(resolve, milliseconds);
   });
 }
+
+main();
