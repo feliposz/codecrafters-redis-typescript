@@ -819,6 +819,9 @@ async function handleStreamRead(
   for (let i = 0; i < cmd.length; i++) {
     if (cmd[i].toUpperCase() === "BLOCK") {
       blockTimeout = parseInt(cmd[i + 1], 10);
+      if (blockTimeout === 0) {
+        blockTimeout = Infinity;
+      }
       i++;
     }
     if (cmd[i].toUpperCase() === "STREAMS") {
