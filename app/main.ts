@@ -840,31 +840,44 @@ async function handleStreamRead(
   firstIdArgIndex = firstStreamArgIndex +
     (cmd.length - firstStreamArgIndex) / 2;
 
+  const queries: [string, number, number][] = [];
+
+  for (
+    let streamArgIndex = firstStreamArgIndex, idArgIndex = firstIdArgIndex;
+    streamArgIndex < firstIdArgIndex;
+    streamArgIndex++, idArgIndex++
+  ) {
+    const streamKey = cmd[streamArgIndex];
+    const start = cmd[idArgIndex];
+
+    let startTimestamp = 0;
+    let startSequence = 0;
+
+    if (start === "$") {
+      if (streamKey in kvStore) {
+        const stream: streamData = kvStore[streamKey].stream!;
+        startTimestamp = stream.last[0];
+        startSequence = stream.last[1];
+      }
+    } else {
+      startTimestamp = parseInt(start, 10);
+      if (start.match(/\d+-\d+/)) {
+        startSequence = parseInt(start.split("-")[1], 10);
+      }
+    }
+
+    queries.push([streamKey, startTimestamp, startSequence]);
+  }
+
   const startWait = Date.now();
   while (true) {
-    for (
-      let streamArgIndex = firstStreamArgIndex, idArgIndex = firstIdArgIndex;
-      streamArgIndex < firstIdArgIndex;
-      streamArgIndex++, idArgIndex++
-    ) {
-      const streamKey = cmd[streamArgIndex];
-      const start = cmd[idArgIndex];
-
+    for (const [streamKey, startTimestamp, startSequence] of queries) {
       if (!(streamKey in kvStore)) {
         continue;
       }
 
       const stream: streamData = kvStore[streamKey].stream!;
-
       const streamEntries: [string, string[]][] = [];
-
-      let startTimestamp = 0;
-      let startSequence = 0;
-
-      startTimestamp = parseInt(start, 10);
-      if (start.match(/\d+-\d+/)) {
-        startSequence = parseInt(start.split("-")[1], 10);
-      }
 
       for (
         const timestamp of Object.keys(stream.data).map((n) => parseInt(n, 10))
