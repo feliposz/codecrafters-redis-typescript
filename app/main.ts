@@ -657,15 +657,6 @@ async function handleStreamAdd(
 ) {
   const streamKey = cmd[1];
   const id = cmd[2];
-  const idParts = id.split("-");
-  const timestamp = parseInt(idParts[0], 10);
-  const sequence = parseInt(idParts[1], 10);
-
-  if (timestamp === 0 && sequence === 0) {
-    await connection.write(
-      encodeError("ERR The ID specified in XADD must be greater than 0-0"),
-    );
-  }
 
   if (!(streamKey in kvStore)) {
     kvStore[streamKey] = {
@@ -676,6 +667,23 @@ async function handleStreamAdd(
   }
 
   const stream: streamData = kvStore[streamKey].stream!;
+
+  const idParts = id.split("-");
+  const timestamp = parseInt(idParts[0], 10);
+  let sequence = 0;
+  if (idParts.length === 2 && idParts[1] === "*") {
+    if (stream.last[0] === timestamp) {
+      sequence = stream.last[1] + 1;
+    }
+  } else {
+    sequence = parseInt(idParts[1], 10);
+  }
+
+  if (timestamp === 0 && sequence === 0) {
+    await connection.write(
+      encodeError("ERR The ID specified in XADD must be greater than 0-0"),
+    );
+  }
 
   if (
     timestamp < stream.last[0] ||
