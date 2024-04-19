@@ -669,14 +669,23 @@ async function handleStreamAdd(
   const stream: streamData = kvStore[streamKey].stream!;
 
   const idParts = id.split("-");
-  const timestamp = parseInt(idParts[0], 10);
+  let timestamp = 0;
   let sequence = 0;
-  if (idParts.length === 2 && idParts[1] === "*") {
-    if (stream.last[0] === timestamp) {
-      sequence = stream.last[1] + 1;
-    }
+
+  if (idParts.length === 1 && idParts[0] === "*") {
+    timestamp = Date.now();
   } else {
-    sequence = parseInt(idParts[1], 10);
+    timestamp = parseInt(idParts[0], 10);
+  }
+
+  if (idParts.length === 2) {
+    if (idParts[1] === "*") {
+      if (stream.last[0] === timestamp) {
+        sequence = stream.last[1] + 1;
+      }
+    } else {
+      sequence = parseInt(idParts[1], 10);
+    }
   }
 
   if (timestamp === 0 && sequence === 0) {
