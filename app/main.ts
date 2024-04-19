@@ -753,9 +753,14 @@ async function handleStreamRange(
     }
   }
 
-  endTimestamp = parseInt(end, 10);
-  if (end.match(/\d+-\d+/)) {
-    endSequence = parseInt(end.split("-")[1], 10);
+  if (end === "+") {
+    endTimestamp = stream.last[0];
+    endSequence = stream.last[1];
+  } else {
+    endTimestamp = parseInt(end, 10);
+    if (end.match(/\d+-\d+/)) {
+      endSequence = parseInt(end.split("-")[1], 10);
+    }
   }
 
   const result: [string, string[]][] = [];
