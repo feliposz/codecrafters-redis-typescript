@@ -815,7 +815,12 @@ async function handleStreamRead(
 
   let firstStreamArgIndex = -1;
   let firstIdArgIndex = -1;
+  let blockTimeout = 0;
   for (let i = 0; i < cmd.length; i++) {
+    if (cmd[i].toUpperCase() === "BLOCK") {
+      blockTimeout = parseInt(cmd[i + 1], 10);
+      i++;
+    }
     if (cmd[i].toUpperCase() === "STREAMS") {
       firstStreamArgIndex = i + 1;
       break;
@@ -832,57 +837,72 @@ async function handleStreamRead(
   firstIdArgIndex = firstStreamArgIndex +
     (cmd.length - firstStreamArgIndex) / 2;
 
-  for (
-    let streamArgIndex = firstStreamArgIndex, idArgIndex = firstIdArgIndex;
-    streamArgIndex < firstIdArgIndex;
-    streamArgIndex++, idArgIndex++
-  ) {
-    const streamKey = cmd[streamArgIndex];
-    const start = cmd[idArgIndex];
-
-    if (!(streamKey in kvStore)) {
-      await connection.write(encodeArray([]));
-      return;
-    }
-
-    const stream: streamData = kvStore[streamKey].stream!;
-
-    const streamEntries: [string, string[]][] = [];
-
-    let startTimestamp = 0;
-    let startSequence = 0;
-
-    startTimestamp = parseInt(start, 10);
-    if (start.match(/\d+-\d+/)) {
-      startSequence = parseInt(start.split("-")[1], 10);
-    }
-
+  const startWait = Date.now();
+  while (true) {
     for (
-      const timestamp of Object.keys(stream.data).map((n) => parseInt(n, 10))
+      let streamArgIndex = firstStreamArgIndex, idArgIndex = firstIdArgIndex;
+      streamArgIndex < firstIdArgIndex;
+      streamArgIndex++, idArgIndex++
     ) {
-      if (timestamp >= startTimestamp) {
-        for (
-          const sequence of Object.keys(stream.data[timestamp]).map((n) =>
-            parseInt(n, 10)
-          )
-        ) {
-          if (
-            (timestamp > startTimestamp ||
-              (timestamp === startTimestamp && sequence > startSequence))
+      const streamKey = cmd[streamArgIndex];
+      const start = cmd[idArgIndex];
+
+      if (!(streamKey in kvStore)) {
+        continue;
+      }
+
+      const stream: streamData = kvStore[streamKey].stream!;
+
+      const streamEntries: [string, string[]][] = [];
+
+      let startTimestamp = 0;
+      let startSequence = 0;
+
+      startTimestamp = parseInt(start, 10);
+      if (start.match(/\d+-\d+/)) {
+        startSequence = parseInt(start.split("-")[1], 10);
+      }
+
+      for (
+        const timestamp of Object.keys(stream.data).map((n) => parseInt(n, 10))
+      ) {
+        if (timestamp >= startTimestamp) {
+          for (
+            const sequence of Object.keys(stream.data[timestamp]).map((n) =>
+              parseInt(n, 10)
+            )
           ) {
-            streamEntries.push([
-              `${timestamp}-${sequence}`,
-              stream.data[timestamp][sequence],
-            ]);
+            if (
+              (timestamp > startTimestamp ||
+                (timestamp === startTimestamp && sequence > startSequence))
+            ) {
+              streamEntries.push([
+                `${timestamp}-${sequence}`,
+                stream.data[timestamp][sequence],
+              ]);
+            }
           }
         }
       }
+
+      if (streamEntries.length > 0) {
+        result.push([streamKey, streamEntries]);
+      }
     }
 
-    result.push([streamKey, streamEntries]);
+    const elapsedWait = Date.now() - startWait;
+    if (result.length > 0 || elapsedWait > blockTimeout) {
+      break;
+    }
+    await sleep(100);
   }
 
   console.log(result);
+
+  if (result.length === 0) {
+    await connection.write(encodeNull());
+    return;
+  }
 
   let encodedResult = `*${result.length}\r\n`;
   for (const stream of result) {
@@ -898,4 +918,10 @@ async function handleStreamRead(
   }
 
   await connection.write(strToBytes(encodedResult));
+}
+
+function sleep(milliseconds: number) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, milliseconds);
+  });
 }
