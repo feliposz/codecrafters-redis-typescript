@@ -832,53 +832,55 @@ async function handleStreamRead(
   firstIdArgIndex = firstStreamArgIndex +
     (cmd.length - firstStreamArgIndex) / 2;
 
-  const streamKey = cmd[firstStreamArgIndex];
-  const start = cmd[firstIdArgIndex];
-
-  console.log(streamKey, start);
-
-  if (!(streamKey in kvStore)) {
-    await connection.write(encodeArray([]));
-    return;
-  }
-
-  const stream: streamData = kvStore[streamKey].stream!;
-
-  const streamEntries: [string, string[]][] = [];
-
-  let startTimestamp = 0;
-  let startSequence = 0;
-
-  startTimestamp = parseInt(start, 10);
-  if (start.match(/\d+-\d+/)) {
-    startSequence = parseInt(start.split("-")[1], 10);
-  }
-
-  console.log(startTimestamp, startSequence);
-
   for (
-    const timestamp of Object.keys(stream.data).map((n) => parseInt(n, 10))
+    let streamArgIndex = firstStreamArgIndex, idArgIndex = firstIdArgIndex;
+    streamArgIndex < firstIdArgIndex;
+    streamArgIndex++, idArgIndex++
   ) {
-    if (timestamp >= startTimestamp) {
-      for (
-        const sequence of Object.keys(stream.data[timestamp]).map((n) =>
-          parseInt(n, 10)
-        )
-      ) {
-        if (
-          (timestamp > startTimestamp ||
-            (timestamp === startTimestamp && sequence > startSequence))
+    const streamKey = cmd[streamArgIndex];
+    const start = cmd[idArgIndex];
+
+    if (!(streamKey in kvStore)) {
+      await connection.write(encodeArray([]));
+      return;
+    }
+
+    const stream: streamData = kvStore[streamKey].stream!;
+
+    const streamEntries: [string, string[]][] = [];
+
+    let startTimestamp = 0;
+    let startSequence = 0;
+
+    startTimestamp = parseInt(start, 10);
+    if (start.match(/\d+-\d+/)) {
+      startSequence = parseInt(start.split("-")[1], 10);
+    }
+
+    for (
+      const timestamp of Object.keys(stream.data).map((n) => parseInt(n, 10))
+    ) {
+      if (timestamp >= startTimestamp) {
+        for (
+          const sequence of Object.keys(stream.data[timestamp]).map((n) =>
+            parseInt(n, 10)
+          )
         ) {
-          streamEntries.push([
-            `${timestamp}-${sequence}`,
-            stream.data[timestamp][sequence],
-          ]);
+          if (
+            (timestamp > startTimestamp ||
+              (timestamp === startTimestamp && sequence > startSequence))
+          ) {
+            streamEntries.push([
+              `${timestamp}-${sequence}`,
+              stream.data[timestamp][sequence],
+            ]);
+          }
         }
       }
     }
-  }
 
-  result.push([streamKey, streamEntries]);
+    result.push([streamKey, streamEntries]);
+  }
 
   console.log(result);
 
@@ -894,8 +896,6 @@ async function handleStreamRead(
       }
     }
   }
-
-  console.log(encodedResult);
 
   await connection.write(strToBytes(encodedResult));
 }
