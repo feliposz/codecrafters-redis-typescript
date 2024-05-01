@@ -1,6 +1,7 @@
-import * as path from "jsr:@std/path";
-import * as base64 from "jsr:@std/encoding/base64";
-import { iterateReader } from "@std/io/iterate-reader";
+import path from "path";
+import { readFileSync } from "fs";
+import PromiseSocket from "promise-socket"
+import * as net from "net";
 
 type keyValueStore = {
   [key: string]: {
@@ -35,7 +36,7 @@ type serverConfig = {
 };
 
 type replicaState = {
-  connection: Deno.TcpConn;
+  connection: net.Socket;
   offset: number;
   active: boolean;
 };
@@ -59,54 +60,53 @@ async function main() {
     ackCount: 0,
   };
 
-  for (let i = 0; i < Deno.args.length; i++) {
-    switch (Deno.args[i]) {
+  for (let i = 0; i < Bun.argv.length; i++) {
+    switch (Bun.argv[i]) {
       case "--dir":
-        cfg.dir = Deno.args[i + 1];
+        cfg.dir = Bun.argv[i + 1];
         i++;
         break;
       case "--dbfilename":
-        cfg.dbfilename = Deno.args[i + 1];
+        cfg.dbfilename = Bun.argv[i + 1];
         i++;
         break;
       case "--port":
-        cfg.port = parseInt(Deno.args[i + 1], 10);
+        cfg.port = parseInt(Bun.argv[i + 1], 10);
         i++;
         break;
       case "--replicaof":
         cfg.role = "slave";
-        cfg.replicaOfHost = Deno.args[i + 1];
-        cfg.replicaOfPort = parseInt(Deno.args[i + 2], 10);
+        cfg.replicaOfHost = Bun.argv[i + 1];
+        cfg.replicaOfPort = parseInt(Bun.argv[i + 2], 10);
         i += 2;
         break;
     }
   }
 
-  const kvStore = loadRdb(cfg);
+  const kvStore = await loadRdb(cfg);
 
   await replicaHandshake(cfg, kvStore);
 
-  const listener = Deno.listen({
-    hostname: "127.0.0.1",
-    port: cfg.port,
-    transport: "tcp",
+  const server: net.Server = net.createServer();
+  server.listen(cfg.port, "127.0.0.1");
+  console.log(`listening on 127.0.0.1:${cfg.port}`);
+
+  server.on("connection", (connection: net.Socket) => {
+    handleConnection(connection, cfg, kvStore, true);
   });
 
-  console.log(`listening on ${listener.addr.hostname}:${listener.addr.port}`);
 
-  for await (const connection of listener) {
-    handleConnection(connection, cfg, kvStore, true);
-  }
 }
 
 async function handleConnection(
-  connection: Deno.TcpConn,
+  connection: net.Socket,
   cfg: serverConfig,
   kvStore: keyValueStore,
   sendReply: boolean,
 ) {
   console.log("client connected");
-  for await (const data of iterateReader(connection)) {
+
+  connection.on("data", async (data) => {
     const commands = decodeCommands(data);
     for (const cmd of commands) {
       console.log(cmd);
@@ -114,12 +114,12 @@ async function handleConnection(
       switch (cmd[0].toUpperCase()) {
         case "PING":
           if (sendReply) {
-            await connection.write(encodeSimple("PONG"));
+            connection.write(encodeSimple("PONG"));
           }
           break;
 
         case "ECHO":
-          await connection.write(encodeBulk(cmd[1]));
+          connection.write(encodeBulk(cmd[1]));
           break;
 
         case "SET":
@@ -131,7 +131,7 @@ async function handleConnection(
             kvStore[cmd[1]].expiration = t;
           }
           if (sendReply) {
-            await connection.write(encodeSimple("OK"));
+            connection.write(encodeSimple("OK"));
             propagate(cfg, cmd);
           }
           break;
@@ -142,41 +142,41 @@ async function handleConnection(
             const now = new Date();
             if ((entry.expiration ?? now) < now) {
               delete kvStore[cmd[1]];
-              await connection.write(encodeNull());
+              connection.write(encodeNull());
             } else {
-              await connection.write(encodeBulk(entry.value));
+              connection.write(encodeBulk(entry.value));
             }
           } else {
-            await connection.write(encodeNull());
+            connection.write(encodeNull());
           }
           break;
 
         case "KEYS":
-          await connection.write(encodeArray(Object.keys(kvStore)));
+          connection.write(encodeArray(Object.keys(kvStore)));
           break;
 
         case "CONFIG":
           if (cmd.length == 3 && cmd[1].toUpperCase() === "GET") {
             switch (cmd[2].toLowerCase()) {
               case "dir":
-                await connection.write(encodeArray(["dir", cfg.dir]));
+                connection.write(encodeArray(["dir", cfg.dir]));
                 break;
               case "dbfilename":
-                await connection.write(
+                connection.write(
                   encodeArray(["dbfilename", cfg.dbfilename]),
                 );
                 break;
               default:
-                await connection.write(encodeError("not found"));
+                connection.write(encodeError("not found"));
                 break;
             }
           } else {
-            await connection.write(encodeError("action not implemented"));
+            connection.write(encodeError("action not implemented"));
           }
           break;
 
         case "INFO":
-          await connection.write(
+          connection.write(
             encodeBulk(
               `role:${cfg.role}\r\nmaster_replid:${cfg.replid}\r\nmaster_repl_offset:${cfg.offset}`,
             ),
@@ -185,7 +185,7 @@ async function handleConnection(
 
         case "REPLCONF":
           if (cmd[1].toUpperCase() === "GETACK") {
-            await connection.write(
+            connection.write(
               encodeArray(["REPLCONF", "ACK", cfg.offset.toString()]),
             );
           } else if (cmd[1].toUpperCase() === "ACK") {
@@ -193,19 +193,20 @@ async function handleConnection(
             cfg.ackCount++;
             // no reply!
           } else {
-            await connection.write(encodeBulk("OK"));
+            connection.write(encodeBulk("OK"));
           }
           break;
 
         case "PSYNC": {
-          await connection.write(
+          connection.write(
             encodeSimple(`FULLRESYNC ${cfg.replid} 0`),
           );
-          const emptyRDB = base64.decodeBase64(
+          const emptyRDB = Buffer.from(
             "UkVESVMwMDEx+glyZWRpcy12ZXIFNy4yLjD6CnJlZGlzLWJpdHPAQPoFY3RpbWXCbQi8ZfoIdXNlZC1tZW3CsMQQAPoIYW9mLWJhc2XAAP/wbjv+wP9aog==",
+            "base64",
           );
-          await connection.write(strToBytes(`\$${emptyRDB.length}\r\n`));
-          await connection.write(emptyRDB);
+          connection.write(strToBytes(`\$${emptyRDB.length}\r\n`));
+          connection.write(emptyRDB);
           cfg.replicas.push({ connection, offset: 0, active: true });
           break;
         }
@@ -214,7 +215,7 @@ async function handleConnection(
           const count = parseInt(cmd[1], 10);
           const timeout = parseInt(cmd[2], 10);
           const ackCount = await handleWait(cfg, count, timeout);
-          await connection.write(encodeInt(ackCount));
+          connection.write(encodeInt(ackCount));
           break;
         }
 
@@ -224,12 +225,12 @@ async function handleConnection(
             const now = new Date();
             if ((entry.expiration ?? now) < now) {
               delete kvStore[cmd[1]];
-              await connection.write(encodeSimple("none"));
+              connection.write(encodeSimple("none"));
             } else {
-              await connection.write(encodeSimple(entry.type));
+              connection.write(encodeSimple(entry.type));
             }
           } else {
-            await connection.write(encodeSimple("none"));
+            connection.write(encodeSimple("none"));
           }
           break;
 
@@ -246,19 +247,23 @@ async function handleConnection(
           break;
 
         default:
-          await connection.write(encodeError("command not implemented"));
+          connection.write(encodeError("command not implemented"));
       }
 
       // rebuild the original command to get the offset of processed commands...
       cfg.offset += encodeArray(cmd).length;
     }
-  }
-  console.log("client disconnected");
+  });
+
+  connection.on("close", () => {
+    console.log("client disconnected");
+  })
 }
 
 function decodeCommands(data: Uint8Array): string[][] {
   const commands: string[][] = [];
   const parts = bytesToStr(data).split("\r\n");
+  console.log(parts);
   let index = 0;
   while (index < parts.length) {
     if (parts[index] === "") {
@@ -285,44 +290,44 @@ function decodeCommands(data: Uint8Array): string[][] {
   return commands;
 }
 
-function encodeSimple(s: string): Uint8Array {
-  return strToBytes(`+${s}\r\n`);
+function encodeSimple(s: string): string {
+  return `+${s}\r\n`;
 }
 
-function encodeBulk(s: string): Uint8Array {
+function encodeBulk(s: string): string {
   if (s.length === 0) {
     return encodeNull();
   }
-  return strToBytes(`\$${s.length}\r\n${s}\r\n`);
+  return `\$${s.length}\r\n${s}\r\n`;
 }
 
-function encodeNull(): Uint8Array {
-  return strToBytes(`$-1\r\n`);
+function encodeNull(): string {
+  return `$-1\r\n`;
 }
 
-function encodeInt(x: number): Uint8Array {
-  return strToBytes(`:${x}\r\n`);
+function encodeInt(x: number): string {
+  return `:${x}\r\n`;
 }
 
-function encodeError(s: string): Uint8Array {
-  return strToBytes(`-${s}\r\n`);
+function encodeError(s: string): string {
+  return `-${s}\r\n`;
 }
 
-function encodeArray(arr: string[]): Uint8Array {
+function encodeArray(arr: string[]): string {
   let result = `*${arr.length}\r\n`;
   for (const s of arr) {
     result += `\$${s.length}\r\n${s}\r\n`;
   }
-  return strToBytes(result);
+  return result;
 }
 
-function loadRdb(cfg: serverConfig): keyValueStore {
+async function loadRdb(cfg: serverConfig): Promise<keyValueStore> {
   if (cfg.dbfilename === "") {
     return {};
   }
 
   const rp = new RDBParser(path.join(cfg.dir, cfg.dbfilename));
-  rp.parse();
+  await rp.parse();
   return rp.getEntries();
 }
 
@@ -334,17 +339,23 @@ class RDBParser {
 
   constructor(path: string) {
     this.path = path;
+    this.data = new Uint8Array();
+  }
+
+  async parse() {
+
+    if (this.path === undefined) {
+      return;
+    }
+
     try {
-      this.data = Deno.readFileSync(this.path);
+      this.data = readFileSync(this.path);
     } catch (e) {
       console.log(`skipped reading RDB file: ${this.path}`);
       console.log(e);
-      this.data = new Uint8Array();
       return;
     }
-  }
 
-  parse() {
     if (this.data === undefined) {
       return;
     }
@@ -521,78 +532,39 @@ function genReplid(): string {
   return result.join("");
 }
 
-async function replicaHandshake(cfg: serverConfig, kvStore: keyValueStore) {
+function replicaHandshake(cfg: serverConfig, kvStore: keyValueStore) {
   if (cfg.role === "master") {
     return;
   }
 
-  const connection = await Deno.connect({
-    hostname: cfg.replicaOfHost,
-    port: cfg.replicaOfPort,
-    transport: "tcp",
-  });
-  const buffer = new Uint8Array(1024);
-  let bytesRead: number | null = 0;
+  const connection = net.connect(cfg.replicaOfPort,cfg.replicaOfHost);
 
-  await connection.write(encodeArray(["ping"]));
-  bytesRead = await connection.read(buffer);
-  console.log(
-    "Handshake 1 (ping): ",
-    bytesToStr(buffer.slice(0, bytesRead ?? 0)),
-  );
-
-  await connection.write(
-    encodeArray(["replconf", "listening-port", cfg.port.toString()]),
-  );
-  bytesRead = await connection.read(buffer);
-  console.log(
-    "Handshake 2a (listening-port): ",
-    bytesToStr(buffer.slice(0, bytesRead ?? 0)),
-  );
-
-  await connection.write(encodeArray(["replconf", "capa", "psync2"]));
-  bytesRead = await connection.read(buffer);
-  console.log(
-    "Handshake 2b (capa): ",
-    bytesToStr(buffer.slice(0, bytesRead ?? 0)),
-  );
-
-  await connection.write(encodeArray(["psync", "?", "-1"]));
-
-  // limit size of buffer to only deal with the +FULLRESYNC...
-  const resyncMsgBuffer = new Uint8Array(56);
-  bytesRead = await connection.read(resyncMsgBuffer);
-  if (bytesRead == null) {
-    throw Error("psync got no response");
-  }
-  console.log("Handshake 3a (psync): ", bytesToStr(resyncMsgBuffer));
-
-  // read one byte at a time to find out the actual size of the RDB file to receive
-  const byte = new Uint8Array(1);
-  let rdbSize = 0;
-  while (true) {
-    bytesRead = await connection.read(byte);
-    if ((bytesRead ?? 0) === 0) {
-      throw Error("unexpected EOF from master");
+    connection.write(encodeArray(["ping"]));
+    let stage = 0;
+    const onData = (data: Buffer) => {
+      if (stage === 0) {
+        console.log("Handshake 1 (ping): ", bytesToStr(data));
+        connection.write(encodeArray(["replconf", "listening-port", cfg.port.toString()]));
+        stage = 1;
+      } else if (stage === 1) {
+        console.log("Handshake 2a (listening-port): ", bytesToStr(data));
+        connection.write(encodeArray(["replconf", "capa", "psync2"]));
+        stage = 2;
+      } else if (stage === 2) {
+        console.log("Handshake 2b (capa): ", bytesToStr(data));
+        connection.write(encodeArray(["psync", "?", "-1"]));
+        stage = 3;
+      } else if (stage === 3) {
+        console.log("Handshake 3a (psync): ", bytesToStr(data));
+        stage = 4;
+      } else if (stage === 4) {
+        console.log("Handshake 3b (rdb): ", bytesToStr(data));
+        // NOTE: ignoring received RDB file sync
+        connection.removeListener("data", onData);
+        handleConnection(connection, cfg, kvStore, false);
+      }
     }
-    if (byte[0] === 0x0a) { // LF = '\n'
-      break;
-    } else if (byte[0] == 0x0d) { // CR = '\r'
-      continue;
-    } else if (byte[0] == 0x24) { // '$'
-      continue;
-    } else if (byte[0] >= 0x30 && byte[0] <= 0x39) { // digits '0'-'9'
-      rdbSize = rdbSize * 10 + byte[0] - 0x30;
-    }
-  }
-
-  // read the RDB file exactly, leaving further messages/commands on the buffer
-  const rdbBuffer = new Uint8Array(rdbSize);
-  bytesRead = await connection.read(rdbBuffer);
-  console.log("Handshake 3b (rdb file): bytes received", bytesRead);
-  console.log(bytesToStr(rdbBuffer.slice(0, bytesRead ?? 0)));
-
-  handleConnection(connection, cfg, kvStore, false);
+    connection.addListener("data", onData);
 }
 
 function propagate(cfg: serverConfig, cmd: string[]) {
@@ -600,8 +572,9 @@ function propagate(cfg: serverConfig, cmd: string[]) {
   for (const replica of cfg.replicas) {
     (async function (replica) {
       try {
-        const bytesSent = await replica.connection.write(encodeArray(cmd));
-        replica.offset += bytesSent;
+        const data = encodeArray(cmd)
+        replica.connection.write(data);
+        replica.offset += data.length;
       } catch {
         replica.active = false;
       }
@@ -637,13 +610,12 @@ function handleWait(
         (async function (replica) {
           try {
             console.log("probing replica with offset: ", replica.offset);
-            const bytesSent = await replica.connection.write(
-              encodeArray(["REPLCONF", "GETACK", "*"]),
-            );
-            replica.offset += bytesSent;
-            const tmpBuffer = new Uint8Array(128);
-            await replica.connection.read(tmpBuffer); // Ignoring response for now
-            acknowledge(1);
+            const data = encodeArray(["REPLCONF", "GETACK", "*"]);
+            replica.connection.write(data);
+            replica.offset += data.length;
+            // response comes on the command handling loop?
+            // const tmpBuffer = replica.connection.read(128); // Ignoring response for now
+            // acknowledge(1);
           } catch {
             replica.active = false;
             acknowledge(0);
@@ -660,7 +632,7 @@ function handleWait(
 
 async function handleStreamAdd(
   kvStore: keyValueStore,
-  connection: Deno.TcpConn,
+  connection: net.Socket,
   cmd: string[],
 ) {
   const streamKey = cmd[1];
@@ -697,7 +669,7 @@ async function handleStreamAdd(
   }
 
   if (timestamp === 0 && sequence === 0) {
-    await connection.write(
+    connection.write(
       encodeError("ERR The ID specified in XADD must be greater than 0-0"),
     );
   }
@@ -706,7 +678,7 @@ async function handleStreamAdd(
     timestamp < stream.last[0] ||
     (timestamp === stream.last[0] && sequence <= stream.last[1])
   ) {
-    await connection.write(
+    connection.write(
       encodeError(
         "ERR The ID specified in XADD is equal or smaller than the target stream top item",
       ),
@@ -722,12 +694,12 @@ async function handleStreamAdd(
   }
   stream.data[timestamp][sequence] = cmd.slice(3);
 
-  await connection.write(encodeBulk(`${timestamp}-${sequence}`));
+  connection.write(encodeBulk(`${timestamp}-${sequence}`));
 }
 
 async function handleStreamRange(
   kvStore: keyValueStore,
-  connection: Deno.TcpConn,
+  connection: net.Socket,
   cmd: string[],
 ) {
   const streamKey = cmd[1];
@@ -735,7 +707,7 @@ async function handleStreamRange(
   const end = cmd[3];
 
   if (!(streamKey in kvStore)) {
-    await connection.write(encodeArray([]));
+    connection.write(encodeArray([]));
   }
 
   const stream: streamData = kvStore[streamKey].stream!;
@@ -793,20 +765,19 @@ async function handleStreamRange(
 
   let encodedResult = `*${result.length}\r\n`;
   for (const entry of result) {
-    encodedResult += `*2\r\n\$${entry[0].length}\r\n${entry[0]}\r\n*${
-      entry[1].length
-    }\r\n`;
+    encodedResult += `*2\r\n\$${entry[0].length}\r\n${entry[0]}\r\n*${entry[1].length
+      }\r\n`;
     for (const value of entry[1]) {
       encodedResult += `\$${value.length}\r\n${value}\r\n`;
     }
   }
 
-  await connection.write(strToBytes(encodedResult));
+  connection.write(strToBytes(encodedResult));
 }
 
 async function handleStreamRead(
   kvStore: keyValueStore,
-  connection: Deno.TcpConn,
+  connection: net.Socket,
   cmd: string[],
 ) {
   const result: [string, [string, string[]][]][] = [];
@@ -828,11 +799,11 @@ async function handleStreamRead(
     }
   }
   if (firstStreamArgIndex === -1) {
-    await connection.write(encodeError("ERR No stream key argument provided"));
+    connection.write(encodeError("ERR No stream key argument provided"));
     return;
   }
   if ((cmd.length - firstStreamArgIndex) % 2 === 1) {
-    await connection.write(encodeError("ERR Missing arguments"));
+    connection.write(encodeError("ERR Missing arguments"));
     return;
   }
   firstIdArgIndex = firstStreamArgIndex +
@@ -914,7 +885,7 @@ async function handleStreamRead(
   console.log(result);
 
   if (result.length === 0) {
-    await connection.write(encodeNull());
+    connection.write(encodeNull());
     return;
   }
 
@@ -931,7 +902,7 @@ async function handleStreamRead(
     }
   }
 
-  await connection.write(strToBytes(encodedResult));
+  connection.write(strToBytes(encodedResult));
 }
 
 function sleep(milliseconds: number) {

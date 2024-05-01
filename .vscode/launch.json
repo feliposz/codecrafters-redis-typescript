@@ -6,18 +6,24 @@
     "configurations": [
         {
             "request": "launch",
-            "name": "Launch Program",
-            "type": "node",
+            "name": "Debug Bun",
+            "type": "bun",
             "program": "${workspaceFolder}/app/main.ts",
             "cwd": "${workspaceFolder}",
             "env": {},
-            "runtimeExecutable": "deno",
-            "runtimeArgs": [
-                "run",
-                "--inspect-wait",
-                "--allow-all"
-            ],
-            "attachSimplePort": 9229
-        }
+            "runtime": "bun",
+            "runtimeArgs": [],
+            "args": [],
+            "strictEnv": false,
+            "watchMode": false,
+            "stopOnEntry": false,
+            "noDebug": false,
+          },
+          {
+            "type": "bun",
+            "request": "attach",
+            "name": "Attach to Bun",
+            "url": "ws://localhost:6499/",
+          }
     ]
 }

@@ -1,3 +1,5 @@
 {
-    "deno.enable": true
-}
+    "bun.runtime": "D:/Users/felip/AppData/Roaming/npm/node_modules/bun/bin/bun.exe",
+    "bun.debugTerminal.enabled": true,
+    "bun.debugTerminal.stopOnEntry": false,
+  }

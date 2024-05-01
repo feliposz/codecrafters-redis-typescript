@@ -1,5 +1,0 @@
-{
-  "imports": {
-    "@std/io": "jsr:@std/io@^0.223.0"
-  }
-}

@@ -1,0 +1,16 @@
+{
+  "name": "@codecrafters/build-your-own-redis",
+  "description": "Build your own Redis challenge, from CodeCrafters",
+  "type": "module",
+  "scripts": {
+    "dev": "bun run app/main.ts"
+  },
+  "dependencies": {
+    "async": "^3.2.0",
+    "promise-socket": "^7.0.0"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.1.1",
+    "@types/node": "^20.12.7"
+  }
+}
