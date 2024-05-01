@@ -262,8 +262,31 @@ async function handleConnection(
 
 function decodeCommands(data: Uint8Array): string[][] {
   const commands: string[][] = [];
-  const parts = bytesToStr(data).split("\r\n");
-  console.log(parts);
+  let parts = bytesToStr(data).split("\r\n");
+
+  // if receiving a fullresynch + rdb file, skip it...
+
+  if (parts[0].startsWith("+FULLRESYNC")) {
+    parts = bytesToStr(data).split("\r\n", 2);
+    console.log("Handshake 3a (psync): ", parts[0]);
+    // resplit the rest
+    data = data.slice(parts[0].length + 2)
+    parts = bytesToStr(data).split("\r\n");
+    console.log("resplit after fullresync: ", parts)
+  }
+
+  if (parts[0].startsWith("$")) {
+    // RDB file sync
+    parts = bytesToStr(data).split("\r\n", 2);
+    const rdbSize = parseInt(parts[0].replace("$", ""), 10);
+    const rdbContent = parts[1].slice(0, rdbSize);
+    console.log("Handshake 3b (rdb): ", rdbContent);
+    // resplit the rest
+    data = data.slice(parts[0].length + 2 + rdbSize)
+    parts = bytesToStr(data).split("\r\n");
+    console.log("resplit after rdb: ", parts)
+  }
+
   let index = 0;
   while (index < parts.length) {
     if (parts[index] === "") {
@@ -553,13 +576,6 @@ function replicaHandshake(cfg: serverConfig, kvStore: keyValueStore) {
       } else if (stage === 2) {
         console.log("Handshake 2b (capa): ", bytesToStr(data));
         connection.write(encodeArray(["psync", "?", "-1"]));
-        stage = 3;
-      } else if (stage === 3) {
-        console.log("Handshake 3a (psync): ", bytesToStr(data));
-        stage = 4;
-      } else if (stage === 4) {
-        console.log("Handshake 3b (rdb): ", bytesToStr(data));
-        // NOTE: ignoring received RDB file sync
         connection.removeListener("data", onData);
         handleConnection(connection, cfg, kvStore, false);
       }
