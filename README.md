@@ -6,6 +6,3 @@ This is my implementation in TypeScript to the
 In this challenge, I've built a simple [Redis](https://redis.io/) clone that's capable of handling
 basic commands like `PING`, `SET` and `GET`, as well as some advanced extensions like [basic replication](https://redis.io/docs/management/replication/),
 [streams](https://redis.io/docs/data-types/streams/) and loading [RDB persisted files](https://redis.io/docs/management/persistence/).
-
-**Note**: Head over to
-[codecrafters.io](https://app.codecrafters.io/r/comfortable-squirrel-392164) to try the challenge yourself. Use [this link](https://app.codecrafters.io/r/comfortable-squirrel-392164) and get a [one-week free access](https://app.codecrafters.io/r/comfortable-squirrel-392164) (for you and for me too)!
